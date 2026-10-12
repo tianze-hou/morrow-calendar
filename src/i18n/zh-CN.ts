@@ -1,0 +1,105 @@
+/**
+ * 日历组件的内置文案全量替换为简体中文。
+ * 键名与 @ilamy/calendar 的 defaultTranslations 一一对应（共 92 项），
+ * 缺项会回退到组件自带英文，所以这里必须保持完整。
+ */
+import type { Translations } from '@ilamy/calendar';
+
+export const zhCN: Translations = {
+  // 顶栏与通用按钮
+  today: '今天',
+  create: '创建',
+  new: '新建',
+  update: '更新',
+  delete: '删除',
+  cancel: '取消',
+  export: '导出',
+  previous: '上一页',
+  next: '下一页',
+
+  // 日程实体
+  event: '日程',
+  events: '日程',
+  newEvent: '新日程',
+  title: '标题',
+  description: '备注',
+  location: '地点',
+  allDay: '全天',
+  startDate: '开始日期',
+  endDate: '结束日期',
+  startTime: '开始时间',
+  searchTime: '查找时间',
+  endTime: '结束时间',
+  color: '颜色',
+  createEvent: '创建日程',
+  editEvent: '编辑日程',
+  addNewEvent: '添加新日程',
+  editEventDetails: '编辑日程详情',
+  eventTitlePlaceholder: '请输入日程标题',
+  eventDescriptionPlaceholder: '补充备注（可选）',
+  eventLocationPlaceholder: '补充地点（可选）',
+
+  // 重复规则（本轮后端不展开，文案先行占位）
+  repeat: '重复',
+  repeats: '重复方式',
+  customRecurrence: '自定义重复',
+  frequency: '频率',
+  everyWeekday: '每个工作日',
+  weeklyOn: '每周于',
+  monthlyOnDay: '每月',
+  monthlyOnThe: '每月第',
+  first: '第一个',
+  second: '第二个',
+  third: '第三个',
+  fourth: '第四个',
+  last: '最后一个',
+  daily: '每天',
+  weekly: '每周',
+  monthly: '每月',
+  yearly: '每年',
+  interval: '间隔',
+  repeatOn: '重复于',
+  never: '永不',
+  count: '次数',
+  every: '每',
+  ends: '结束于',
+  after: '之后',
+  occurrences: '次',
+  on: '于',
+
+  // 重复日程的作用范围
+  editRecurringEvent: '编辑重复日程',
+  deleteRecurringEvent: '删除重复日程',
+  editRecurringEventQuestion: '要编辑哪些日程？',
+  deleteRecurringEventQuestion: '要删除哪些日程？',
+  thisEvent: '仅此日程',
+  thisEventDescription: '只修改选中的这一次',
+  thisAndFollowingEvents: '此日程及后续',
+  thisAndFollowingEventsDescription: '修改这一次及其后的所有日程',
+  allEvents: '全部日程',
+  allEventsDescription: '修改整个系列',
+  onlyChangeThis: '只改这一次',
+  changeThisAndFuture: '改这一次及后续',
+  changeEntireSeries: '改整个系列',
+  onlyDeleteThis: '只删这一次',
+  deleteThisAndFuture: '删这一次及后续',
+  deleteEntireSeries: '删整个系列',
+
+  // 视图
+  month: '月视图',
+  week: '周视图',
+  day: '日视图',
+  year: '年视图',
+  agenda: '日程列表',
+  agendaNoEvents: '当前时间范围内没有日程',
+  more: '更多',
+
+  // 资源视图（本轮未启用，文案一并汉化）
+  resources: '资源',
+  resource: '资源',
+  selectResource: '选择资源',
+  time: '时间',
+  date: '日期',
+  noResourcesVisible: '当前没有显示任何资源',
+  addResourcesOrShowExisting: '请添加资源，或显示已有资源',
+} as Translations;

@@ -1,0 +1,76 @@
+{
+  "name": "morrow-calendar",
+  "version": "0.2.0",
+  "private": true,
+  "description": "日程管理系统：@ilamy/calendar 前端 + AI-native 多用户 REST 后端",
+  "license": "AGPL-3.0-or-later",
+  "author": "tianze-hou",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tianze-hou/morrow-calendar.git"
+  },
+  "homepage": "https://github.com/tianze-hou/morrow-calendar#readme",
+  "bugs": {
+    "url": "https://github.com/tianze-hou/morrow-calendar/issues"
+  },
+  "keywords": [
+    "calendar",
+    "schedule",
+    "ai-agent",
+    "rest-api",
+    "sqlite",
+    "express",
+    "react",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch server/src/index.ts",
+    "dev:web": "vite",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "tsc -p tsconfig.json --noEmit && vite build",
+    "build:server": "esbuild server/src/index.ts --bundle --packages=external --platform=node --target=node22 --format=esm --outfile=dist-server/index.mjs",
+    "start": "cross-env NODE_ENV=production node dist-server/index.mjs",
+    "start:dev": "tsx server/src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "seed": "tsx server/src/scripts/seed.ts",
+    "token": "tsx server/src/scripts/token.ts",
+    "passwd": "tsx server/src/scripts/passwd.ts",
+    "smoke": "tsx server/src/scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@ilamy/calendar": "^3.2.1",
+    "cors": "^2.8.5",
+    "dayjs": "^1.11.20",
+    "express": "^4.21.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.23.8"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^13.0.3",
+    "node-sqlite3-wasm": "^0.8.60"
+  },
+  "devDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.64.5",
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.0",
+    "tailwindcss-animate": "^1.0.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}

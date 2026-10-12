@@ -1,0 +1,21 @@
+# 统一编辑器的基础格式，避免不同人提交时混入 CRLF 或 tab/空格之争。
+# 支持的编辑器（VS Code、JetBrains、Vim 等）会自动读取本文件。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+# Markdown 里行尾的两个空格是有意义的手动换行，不要顺手删掉
+trim_trailing_whitespace = false
+
+[*.{sh,bash}]
+indent_size = 4
+
+[Makefile]
+indent_style = tab

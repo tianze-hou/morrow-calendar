@@ -1,0 +1,23 @@
+# Caddy 反向代理示例。后端自己会托管前端静态资源，所以这里整站反代即可。
+# 放到 /etc/caddy/Caddyfile，然后：caddy fmt --overwrite /etc/caddy/Caddyfile && systemctl reload caddy
+
+schedule.example.com {
+	encode gzip
+
+	# 访问日志
+	log {
+		output file /var/log/caddy/morrow-calendar.log
+	}
+
+	reverse_proxy 127.0.0.1:8787
+
+	# ───────────────────────────────────────────────────────────
+	# 登录验证：待确认后再开启，本轮不启用。
+	# 启用前请注意：basic_auth 会对 /api 一并生效，
+	# 如果希望 AI Agent 能免密调用接口，需要把 /api* 单独放行或改用令牌。
+	#
+	# basic_auth {
+	#     你的用户名  $2a$14$....（用 caddy hash-password 生成）
+	# }
+	# ───────────────────────────────────────────────────────────
+}

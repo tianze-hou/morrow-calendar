@@ -1,0 +1,20 @@
+# 统一仓库内的行尾：源码与文档一律 LF，避免 Windows 协作时混入 CRLF 产生整文件 diff。
+* text=auto eol=lf
+
+# 部署脚本在 Linux 上运行，必须保持 LF
+*.sh text eol=lf
+
+# Windows 批处理用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.gz binary
+
+# lockfile 不参与 diff 折叠统计之外的处理
+package-lock.json linguist-generated=true

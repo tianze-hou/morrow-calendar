@@ -1,0 +1,34 @@
+[Unit]
+Description=morrow calendar 日程服务
+Documentation=https://github.com/
+After=network.target
+
+[Service]
+Type=simple
+# 建议用专用用户运行，不要用 root
+User=morrow
+Group=morrow
+
+WorkingDirectory=/opt/morrow-calendar
+EnvironmentFile=/etc/morrow-calendar.env
+ExecStart=/usr/bin/node /opt/morrow-calendar/dist-server/index.mjs
+
+Restart=always
+RestartSec=3
+# 崩溃后 60 秒内重启超过 5 次就放弃，避免打日志风暴
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=morrow-calendar
+
+# 轻量加固：禁止提权、限制可写目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/morrow-calendar
+
+[Install]
+WantedBy=multi-user.target

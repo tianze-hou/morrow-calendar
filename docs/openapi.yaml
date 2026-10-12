@@ -1,0 +1,1474 @@
+openapi: 3.1.0
+info:
+  title: morrow calendar API
+  version: 0.2.0
+  summary: 多用户日程管理系统的 AI-native 接口
+  description: |
+    面向 AI Agent 的日程读写接口。Agent 读一次 GET /api/meta 就能掌握全部能力，
+    之后所有交互都走结构化 JSON，不需要解析任何页面。想要一页式简报（Markdown，
+    可直接贴进对话）拉 GET /api/agent.md。
+
+    几条硬性约定：
+    - 所有时间字段都是 RFC 3339 字符串且带时区偏移，例 2026-10-12T10:00:00+08:00。
+      不带偏移时按服务端时区解释，默认 Asia/Shanghai。
+    - 响应统一信封：成功 { ok:true, data, meta? }，失败 { ok:false, error:{ code, message, details?, hint? } }。
+    - 写操作支持 dry_run=true 试运行，支持 Idempotency-Key 头防重复创建。
+
+    鉴权默认开启。除了 `/meta`、`/agent.md`、`/health`、`/openapi.yaml`、`/auth/status`、
+    `/auth/login`、`/auth/logout`、`/setup/status`、`/setup/admin`，其余端点都需要凭据，
+    两种方式任选其一：
+    - `Authorization: Bearer <令牌>`，推荐给 Agent，长期有效、可单独吊销；
+    - 登录后服务端下发的 `morrow_session` 会话 cookie，浏览器会自动携带。
+    未带凭据返回 401 `UNAUTHORIZED`；越权访问他人资源返回 404 而不是 403，避免被用来枚举。
+
+    初始化引导：库里一个用户都没有时，`GET /meta` 的 `onboarding.required` 为 true，
+    首个管理员由人在浏览器创建（`POST /setup/admin`）。Agent 不应代劳，应提示人类打开网页。
+
+    数据隔离：日程、日历分组、设置都按用户隔离。Agent 用哪个令牌，就只能看见那个用户的数据，
+    「我的日程」不需要、也不该传 owner 参数。
+
+    暂不支持：重复日程（RRULE 恒为 null）、日历分组共享、资源视图（会议室/参与人）。
+servers:
+  - url: http://127.0.0.1:8787/api
+    description: 本地开发
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+tags:
+  - name: meta
+    description: 自描述与健康检查
+  - name: setup
+    description: 初始化引导（仅零用户时可用）
+  - name: auth
+    description: 登录、登出与口令
+  - name: tokens
+    description: API 令牌管理
+  - name: users
+    description: 用户管理（管理员）
+  - name: calendars
+    description: 日历分组
+  - name: events
+    description: 日程读写与回收站
+
+paths:
+  /meta:
+    get:
+      tags: [meta]
+      operationId: getMeta
+      summary: 服务自描述（Agent 第一个应当调用的接口）
+      description: 返回能力开关、枚举、限制、端点清单与文档地址。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiMeta'
+
+  /health:
+    get:
+      tags: [meta]
+      operationId: getHealth
+      summary: 健康检查与存储信息
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string }
+                      service: { type: string }
+                      version: { type: string }
+                      storage:
+                        type: object
+                        properties:
+                          driver: { type: string, description: 'sqlite 驱动名，如 node-sqlite3-wasm / better-sqlite3' }
+                          path: { type: string }
+                      eventCount: { type: integer }
+                      trashCount: { type: integer, description: 回收站中的日程数 }
+                      userCount: { type: integer }
+                      authRequired: { type: boolean, description: 是否开启了强制鉴权 }
+                      setupRequired: { type: boolean, description: 是否还没初始化（零用户且未自动建号） }
+
+  /agent.md:
+    get:
+      tags: [meta]
+      operationId: getAgentBrief
+      security: []
+      summary: 面向 Agent 的一页式简报（公开，Markdown）
+      description: |
+        把 `/meta` 的内容摊平成一页 Markdown：上手序列、约定、端点一览、机器可读协议入口。
+        与 `/meta` 同源生成，两者不会各说各话。人类可以用一条 curl 抓下来直接贴进对话。
+      responses:
+        '200':
+          description: OK
+          content:
+            text/markdown:
+              schema:
+                type: string
+
+  # ───────────────────────── 初始化引导 ─────────────────────────
+
+  /setup/status:
+    get:
+      tags: [setup]
+      operationId: getSetupStatus
+      security: []
+      summary: 是否需要初始化（公开）
+      description: |
+        前端启动时先问这一句：`needsSetup: true` 就渲染「创建管理员」向导而不是登录页。
+        只在多用户模式且库里零用户时为 true。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          service: { type: string }
+                          version: { type: string }
+                          needsSetup: { type: boolean, description: 是否还没初始化 }
+                          authRequired: { type: boolean }
+                          suggestedUsername: { type: string, description: 建议的管理员用户名，仅作预填 }
+
+  /setup/admin:
+    post:
+      tags: [setup]
+      operationId: createFirstAdmin
+      security: []
+      summary: 创建首个管理员（仅零用户时可用，一次性）
+      description: |
+        成功即下发会话 cookie，等同登录，前端可直接进主界面。
+        一旦库里存在任何用户，本接口返回 409 `ALREADY_EXISTS`。
+        首个管理员的凭据只应来自人——Agent 不要代劳。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, description: 3–32 位，字母/数字/点/下划线/短横线 }
+                password: { type: string, minLength: 8 }
+                displayName: { type: string, maxLength: 64 }
+      responses:
+        '201':
+          description: 创建成功，会话 cookie 已下发
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          user: { $ref: '#/components/schemas/User' }
+                          expiresAt: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/AlreadyExists' }
+
+  # ───────────────────────────── 鉴权 ─────────────────────────────
+
+  /auth/status:
+    get:
+      tags: [auth]
+      operationId: getAuthStatus
+      security: []
+      summary: 查询鉴权开关与当前登录身份（公开）
+      description: 前端首屏用它决定是渲染登录页还是主界面。未登录时 `user` 为 null。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          required: { type: boolean, description: 是否强制鉴权 }
+                          authenticated: { type: boolean }
+                          user: { $ref: '#/components/schemas/User' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      security: []
+      summary: 口令登录，成功后在响应头下发会话 cookie
+      description: |
+        用户名不存在与口令错误返回**同一个错误**（`UNAUTHORIZED`），避免账号枚举。
+        成功后服务端设置 `morrow_session`（HttpOnly、SameSite=Lax）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: 登录成功，返回用户与过期时间
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          user: { $ref: '#/components/schemas/User' }
+                          expiresAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      security: []
+      summary: 退出登录并清除会话
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+
+  /auth/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: 读取当前登录用户
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/password:
+    put:
+      tags: [auth]
+      operationId: changePassword
+      summary: 修改本人登录口令
+      description: 需要提供当前口令；修改成功后该用户的其它会话仍有效，但本人当前会话继续可用。
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword: { type: string, format: password, minLength: 8 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ──────────────────────────── API 令牌 ────────────────────────────
+
+  /tokens:
+    get:
+      tags: [tokens]
+      operationId: listTokens
+      summary: 列出本人的 API 令牌（不含明文）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ApiToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [tokens]
+      operationId: createToken
+      summary: 创建 API 令牌，明文仅返回一次
+      description: |
+        明文形如 `isk_...`，**只在这一次响应里出现**；服务端只保存 SHA-256 哈希。
+        请立刻保存，之后无法再查看。数量受 `limits.maxTokens` 限制。
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 64, description: 备注名，便于识别用途 }
+                expiresInDays:
+                  type: integer
+                  minimum: 1
+                  nullable: true
+                  description: 有效天数；省略或 null 表示长期有效
+      responses:
+        '201':
+          description: 创建成功，`data.token` 即明文
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/ApiToken'
+                          - type: object
+                            properties:
+                              token: { type: string, description: 明文令牌，仅此一次 }
+        '409': { $ref: '#/components/responses/AlreadyExists' }
+
+  /tokens/{id}/revoke:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: 令牌 ID }
+    post:
+      tags: [tokens]
+      operationId: revokeToken
+      summary: 吊销令牌（保留记录以便审计）
+      description: 吊销后该令牌立即失效，且不影响其它令牌与当前登录会话。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tokens/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: 令牌 ID }
+    delete:
+      tags: [tokens]
+      operationId: deleteToken
+      summary: 彻底删除令牌记录
+      description: 与「吊销」的区别：这里连记录一起去掉，不可恢复。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────── 用户 ─────────────────────────────
+
+  /users:
+    get:
+      tags: [users]
+      operationId: listUsers
+      summary: 用户列表（管理员看全部，普通用户只看自己）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [users]
+      operationId: createUser
+      summary: 创建用户（仅管理员）
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  pattern: '^[a-zA-Z0-9_-]{3,32}$'
+                  description: 字母数字下划线连字符，3–32 位
+                password: { type: string, format: password, minLength: 8 }
+                displayName: { type: string, maxLength: 64 }
+                role: { type: string, enum: [admin, member], default: member }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/AlreadyExists' }
+
+  /users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: 用户 ID，形如 usr_xxxx }
+    patch:
+      tags: [users]
+      operationId: updateUser
+      summary: 修改用户资料/口令/角色/停用（仅管理员）
+      description: |
+        不能改动自己（`FORBIDDEN`）；不能把最后一个管理员降级或停用（`LAST_ADMIN`）。
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string, maxLength: 64 }
+                password: { type: string, format: password, minLength: 8 }
+                role: { type: string, enum: [admin, member] }
+                disabled: { type: boolean }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 最后一个管理员不能被降级或停用
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FailureEnvelope' }
+    delete:
+      tags: [users]
+      operationId: deleteUser
+      summary: 删除用户及其全部数据（仅管理员）
+      description: 连带删除该用户的日程、分组、令牌与会话。不能删自己，也不能删内置的 `local` 账号。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ──────────────────────────── 日历分组 ────────────────────────────
+
+  /calendars:
+    get:
+      tags: [calendars]
+      operationId: listCalendars
+      summary: 列出本人的日历分组
+      description: 每个用户首次访问时会自动获得一个 `id='default'` 的默认分组，且**不可删除**。
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/CalendarGroup' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [calendars]
+      operationId: createCalendar
+      summary: 新建日历分组
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCalendarInput' }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CalendarGroup' }
+        '409': { $ref: '#/components/responses/AlreadyExists' }
+
+  /calendars/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: 分组 ID，形如 cal_xxxx }
+    patch:
+      tags: [calendars]
+      operationId: updateCalendar
+      summary: 改名 / 换色 / 切换可见性 / 排序
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCalendarInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CalendarGroup' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [calendars]
+      operationId: deleteCalendar
+      summary: 删除分组（组内日程迁入默认分组）
+      description: |
+        不会删除日程：组内日程会被移到 `default` 分组，返回 `movedEvents` 告知迁移条数。
+        默认分组不可删除。
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      responses:
+        '200':
+          description: OK，`data.movedEvents` 为迁移的日程数
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id: { type: string }
+                          movedEvents: { type: integer }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /settings:
+    get:
+      tags: [meta]
+      operationId: getSettings
+      summary: 读取界面设置
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AppSettings' }
+                      meta:
+                        type: object
+                        properties:
+                          source: { type: string, enum: [default, stored, partial] }
+                          defaults: { $ref: '#/components/schemas/AppSettings' }
+                          available:
+                            type: object
+                            properties:
+                              themes: { type: array, items: { type: string } }
+                              views: { type: array, items: { type: string } }
+    put:
+      tags: [meta]
+      operationId: updateSettings
+      summary: 局部更新界面设置（服务端持久化）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppSettingsPatch' }
+            examples:
+              theme:
+                value: { theme: braun, timeFormat: '12-hour' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AppSettings' }
+                      meta:
+                        type: object
+                        properties:
+                          updated: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+  /settings/reset:
+    post:
+      tags: [meta]
+      operationId: resetSettings
+      summary: 恢复出厂设置
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/AppSettings' }
+                      meta:
+                        type: object
+                        properties:
+                          reset: { type: boolean, const: true }
+
+  /events:
+    get:
+      tags: [events]
+      operationId: listEvents
+      summary: 查询日程
+      description: |
+        from/to 与 window 互斥；两者都给时以 from/to 为准。
+        筛选语义为「时间区间相交」：end_utc > from AND start_utc < to。
+        参数同时接受 snake_case 与 camelCase。
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+          description: 起始时间（含），RFC 3339
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+          description: 结束时间（不含），RFC 3339
+        - name: window
+          in: query
+          schema: { $ref: '#/components/schemas/TimeWindow' }
+          description: 相对时间窗口，省去自己算日期
+        - name: q
+          in: query
+          schema: { type: string }
+          description: 标题/描述/地点模糊搜索
+        - name: calendarId
+          in: query
+          schema: { type: string }
+        - name: calendarIds
+          in: query
+          schema: { type: string }
+          description: |
+            逗号分隔的多个分组 ID，用于按可见分组过滤。
+            注意与 `calendarId` 的区别：显式传空串表示「没有任何分组」→ 返回空集，而不是不过滤。
+        - name: deleted
+          in: query
+          schema: { type: string, enum: [exclude, include, only], default: exclude }
+          description: '是否包含回收站：exclude=只看正常（默认）；only=只看回收站（等价于 /events/trash）；include=两者都看。'
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ScheduleEvent' }
+                      meta:
+                        type: object
+                        properties:
+                          count: { type: integer }
+                          total: { type: integer }
+                          limit: { type: integer }
+                          offset: { type: integer }
+                          timezone: { type: string }
+                          resolvedRange: { $ref: '#/components/schemas/ResolvedRange' }
+    post:
+      tags: [events]
+      operationId: createEvent
+      summary: 创建日程
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+        - { $ref: '#/components/parameters/OnConflict' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEventInput' }
+            examples:
+              basic:
+                value:
+                  title: 导师例会
+                  start: '2026-10-12T14:00:00+08:00'
+                  end: '2026-10-12T15:30:00+08:00'
+                  location: 线上
+                  color: blue
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WriteResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: on_conflict=reject 且存在时间冲突
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FailureEnvelope' }
+
+  /events/trash:
+    get:
+      tags: [events]
+      operationId: listTrash
+      summary: 回收站列表
+      description: 列出本人已软删除的日程，按删除时间倒序。响应 `meta.total` 为总数。
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: calendarId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ScheduleEvent' }
+                      meta:
+                        type: object
+                        properties:
+                          count: { type: integer }
+                          total: { type: integer }
+
+  /events/trash/empty:
+    post:
+      tags: [events]
+      operationId: emptyTrash
+      summary: 清空回收站（不可恢复）
+      description: 彻底删除本人回收站内的全部日程。**高风险、不可撤销**，Agent 调用前必须先取得人类确认。
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      responses:
+        '200':
+          description: OK，`data.removed` 为彻底删除的条数
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          removed: { type: integer }
+
+  /events/conflicts:
+    get:
+      tags: [events]
+      operationId: listConflicts
+      summary: 扫描区间内互相重叠的日程对
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: window, in: query, schema: { $ref: '#/components/schemas/TimeWindow' } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            a: { $ref: '#/components/schemas/ConflictInfo' }
+                            b: { $ref: '#/components/schemas/ConflictInfo' }
+                            overlapMinutes: { type: integer }
+                      meta:
+                        type: object
+                        properties:
+                          count: { type: integer }
+                          scanned: { type: integer }
+                          resolvedRange: { $ref: '#/components/schemas/ResolvedRange' }
+
+  /events/batch:
+    post:
+      tags: [events]
+      operationId: batchEvents
+      summary: 批量增改删（上限 50）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchRequest' }
+            examples:
+              dryRun:
+                value:
+                  dryRun: true
+                  operations:
+                    - op: create
+                      data: { title: 晨跑, start: '2026-10-13T07:00:00+08:00', end: '2026-10-13T07:30:00+08:00' }
+                    - op: update
+                      id: evt_xxxx
+                      data: { location: 图书馆 }
+                    - op: delete
+                      id: evt_yyyy
+      responses:
+        '200':
+          description: 逐条结果（即使部分失败也返回 200，看每项 ok 字段）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index: { type: integer }
+                            op: { type: string, enum: [create, update, delete] }
+                            ok: { type: boolean }
+                            idempotentReplay: { type: boolean }
+                            data: { $ref: '#/components/schemas/WriteResult' }
+                            error: { $ref: '#/components/schemas/ErrorObject' }
+                      meta:
+                        type: object
+                        properties:
+                          dryRun: { type: boolean }
+                          atomic: { type: boolean }
+                          requested: { type: integer }
+                          succeeded: { type: integer }
+                          failed: { type: integer }
+                          maxBatchSize: { type: integer }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+  /events/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: 日程 ID，形如 evt_xxxx }
+    get:
+      tags: [events]
+      operationId: getEvent
+      summary: 读取单条日程
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ScheduleEvent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [events]
+      operationId: updateEvent
+      summary: 局部更新（只传要改的字段）
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+        - { $ref: '#/components/parameters/OnConflict' }
+        - { $ref: '#/components/parameters/IfMatch' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateEventInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WriteResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: If-Match 版本过期，或 on_conflict=reject 且产生冲突
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FailureEnvelope' }
+    put:
+      tags: [events]
+      operationId: replaceEvent
+      summary: 完整替换，title/start/end 必填
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+        - { $ref: '#/components/parameters/IfMatch' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEventInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WriteResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [events]
+      operationId: deleteEvent
+      summary: 删除日程（默认移入回收站）
+      description: |
+        默认 `mode=soft`：只标记 `deletedAt`，之后可用 `POST /events/{id}/restore` 恢复。
+        `mode=hard` 直接彻底删除，**不可恢复**，Agent 需先取得人类确认。
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+        - { $ref: '#/components/parameters/DeleteMode' }
+      responses:
+        '200':
+          description: 返回被删除对象快照与所用模式
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WriteResult' }
+                      meta:
+                        type: object
+                        properties:
+                          mode: { type: string, enum: [soft, hard] }
+                          recoverable: { type: boolean }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events/{id}/restore:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: 日程 ID，形如 evt_xxxx }
+    post:
+      tags: [events]
+      operationId: restoreEvent
+      summary: 从回收站恢复日程
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WriteResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events/{id}/purge:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: 日程 ID，形如 evt_xxxx }
+    delete:
+      tags: [events]
+      operationId: purgeEvent
+      summary: 从回收站彻底删除单条（不可恢复）
+      description: 等价于 `DELETE /events/{id}?mode=hard`，语义更明确。
+      parameters:
+        - { $ref: '#/components/parameters/DryRun' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WriteResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 'API 令牌，形如 `Authorization: Bearer isk_xxx`。推荐给 AI Agent。也支持等价的 `X-API-Token: isk_xxx` 头。'
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: morrow_session
+      description: 浏览器登录后由服务端下发的 HttpOnly 会话 cookie，前端无需手工处理。
+
+  parameters:
+    DeleteMode:
+      name: mode
+      in: query
+      description: '删除方式：soft=移入回收站（默认，可恢复）；hard=彻底删除（不可恢复）。'
+      schema: { type: string, enum: [soft, hard], default: soft }
+
+    DryRun:
+      name: dry_run
+      in: query
+      description: '试运行：只返回将要发生的变更（含 before/after 与警告），不落库。AI 写操作前应先跑一次。'
+      schema: { type: boolean, default: false }
+    OnConflict:
+      name: on_conflict
+      in: query
+      description: '时间冲突策略：allow=照写并返回警告（默认）；reject=有冲突直接 409。'
+      schema: { type: string, enum: [allow, reject], default: allow }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: '幂等键。相同键重复提交会直接回放首次结果，避免 Agent 重试造成重复创建。'
+      schema: { type: string }
+    IfMatch:
+      name: If-Match
+      in: header
+      description: '乐观锁版本号（对应 event.version）。不匹配返回 409 VERSION_CONFLICT。'
+      schema: { type: string }
+
+  responses:
+    ValidationFailed:
+      description: 参数校验失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/FailureEnvelope' }
+    NotFound:
+      description: 目标不存在（越权访问他人资源同样返回 404，避免枚举）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/FailureEnvelope' }
+    Unauthorized:
+      description: 未提供凭据或凭据已失效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/FailureEnvelope' }
+    Forbidden:
+      description: 已登录但权限不足（例如普通用户试图创建账号）
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/FailureEnvelope' }
+    AlreadyExists:
+      description: 同名资源已存在，或超出配额上限
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/FailureEnvelope' }
+
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [ok, data]
+      properties:
+        ok: { type: boolean, const: true }
+        data: {}
+        meta: { type: object, additionalProperties: true }
+
+    FailureEnvelope:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { type: boolean, const: false }
+        error: { $ref: '#/components/schemas/ErrorObject' }
+
+    ErrorObject:
+      type: object
+      required: [code, message]
+      properties:
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        message: { type: string }
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+        hint: { type: string, description: 给调用方的下一步建议 }
+
+    ErrorCode:
+      type: string
+      enum:
+        - INVALID_REQUEST
+        - VALIDATION_FAILED
+        - UNAUTHORIZED
+        - FORBIDDEN
+        - NOT_FOUND
+        - ALREADY_EXISTS
+        - VERSION_CONFLICT
+        - CONFLICT_REJECTED
+        - LAST_ADMIN
+        - BATCH_TOO_LARGE
+        - IDEMPOTENCY_KEY_REUSED
+        - INTERNAL_ERROR
+
+    EventColor:
+      type: string
+      enum: [blue, green, red, yellow, purple, pink, indigo, gray]
+
+    TimeWindow:
+      type: string
+      enum: [today, tomorrow, yesterday, this_week, next_week, this_month, next_7_days, next_30_days]
+
+    ResolvedRange:
+      type: object
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        source: { type: string, enum: [explicit, window, none] }
+
+    CreateEventInput:
+      type: object
+      required: [title, start, end]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        start: { type: string, description: 'RFC 3339，例 2026-10-12T14:00:00+08:00' }
+        end: { type: string, description: 必须晚于 start }
+        allDay: { type: boolean, default: false, description: '全天日程；服务端归一化为当日 00:00:00–23:59:59' }
+        description: { type: string, maxLength: 4000 }
+        location: { type: string, maxLength: 200 }
+        color: { $ref: '#/components/schemas/EventColor' }
+        calendarId: { type: string, maxLength: 64, default: default }
+        timezone: { type: string, description: 'IANA 时区名，缺省用服务端配置', default: Asia/Shanghai }
+
+    UpdateEventInput:
+      type: object
+      minProperties: 1
+      allOf:
+        - $ref: '#/components/schemas/CreateEventInput'
+      description: CreateEventInput 的全部字段均可选，至少提供一个。
+
+    ScheduleEvent:
+      type: object
+      required: [id, title, start, end, allDay, calendarId, timezone, rrule, exdates, version, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        allDay: { type: boolean }
+        description: { type: string }
+        location: { type: string }
+        color: { $ref: '#/components/schemas/EventColor' }
+        calendarId: { type: string }
+        ownerId: { type: string, description: 归属用户 ID。数据按用户隔离，通常不必关心 }
+        timezone: { type: string }
+        rrule: { type: string, nullable: true, description: '【预留】本轮恒为 null' }
+        exdates: { type: array, items: { type: string }, description: '【预留】本轮恒为 []' }
+        deletedAt: { type: string, format: date-time, nullable: true, description: 非空表示在回收站中 }
+        version: { type: integer, description: 每次写入 +1，配合 If-Match 做乐观锁 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, description: 形如 usr_xxxx }
+        username: { type: string }
+        displayName: { type: string }
+        role: { type: string, enum: [admin, member] }
+        disabled: { type: boolean, description: 停用后无法登录，但数据保留 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ApiToken:
+      type: object
+      description: 令牌元数据。明文只在创建响应里出现一次，此处永远不含。
+      properties:
+        id: { type: string }
+        name: { type: string }
+        prefix: { type: string, description: '明文前几位，便于人工辨认是哪一条' }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        revoked: { type: boolean }
+
+    CalendarGroup:
+      type: object
+      properties:
+        id: { type: string, description: '形如 cal_xxxx；默认分组固定为 default' }
+        name: { type: string }
+        color: { $ref: '#/components/schemas/EventColor' }
+        visible: { type: boolean, description: 隐藏后其日程不出现在日历里，但数据仍在 }
+        isDefault: { type: boolean, description: 每个用户恰有一个，不可删除 }
+        sortOrder: { type: integer }
+        eventCount: { type: integer, description: 组内正常日程数（不含回收站） }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateCalendarInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 64 }
+        color: { $ref: '#/components/schemas/EventColor' }
+        visible: { type: boolean, default: true }
+
+    UpdateCalendarInput:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string, maxLength: 64 }
+        color: { $ref: '#/components/schemas/EventColor' }
+        visible: { type: boolean }
+        sortOrder: { type: integer }
+
+
+    ConflictInfo:
+      type: object
+      properties:
+        eventId: { type: string }
+        title: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        overlapMinutes: { type: integer }
+
+    Warning:
+      type: object
+      properties:
+        code: { type: string, enum: [TIME_CONFLICT, DUPLICATE_SUSPECTED, NO_CHANGE] }
+        message: { type: string }
+        conflicts:
+          type: array
+          items: { $ref: '#/components/schemas/ConflictInfo' }
+
+    WriteResult:
+      type: object
+      required: [dryRun, result]
+      properties:
+        dryRun: { type: boolean }
+        result: { $ref: '#/components/schemas/ScheduleEvent' }
+        changes:
+          type: object
+          properties:
+            before: { $ref: '#/components/schemas/ScheduleEvent' }
+            after: { $ref: '#/components/schemas/ScheduleEvent' }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/Warning' }
+
+    BatchRequest:
+      type: object
+      required: [operations]
+      properties:
+        dryRun: { type: boolean, default: false }
+        onConflict: { type: string, enum: [allow, reject], default: allow }
+        atomic: { type: boolean, default: false, description: 'true 时先全量预检，任一失败则整批回滚' }
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            oneOf:
+              - type: object
+                required: [op, data]
+                properties:
+                  op: { type: string, const: create }
+                  idempotencyKey: { type: string }
+                  data: { $ref: '#/components/schemas/CreateEventInput' }
+              - type: object
+                required: [op, id, data]
+                properties:
+                  op: { type: string, const: update }
+                  id: { type: string }
+                  data: { $ref: '#/components/schemas/UpdateEventInput' }
+              - type: object
+                required: [op, id]
+                properties:
+                  op: { type: string, const: delete }
+                  id: { type: string }
+
+    AppSettings:
+      type: object
+      required: [theme, timeFormat, firstDayOfWeek, defaultView, sidebarOpen]
+      properties:
+        theme: { type: string, enum: [day, night], description: 'day=白日（暖白纸感，浅色）/ night=黑夜（低饱和深灰蓝，深色）' }
+        timeFormat: { type: string, enum: ['12-hour', '24-hour'] }
+        firstDayOfWeek: { type: string, enum: [monday, sunday] }
+        defaultView: { type: string, enum: [day, week, month, agenda] }
+        sidebarOpen: { type: boolean, description: 默认是否展开日历侧栏 }
+
+    AppSettingsPatch:
+      type: object
+      minProperties: 1
+      properties:
+        theme: { type: string, enum: [day, night] }
+        timeFormat: { type: string, enum: ['12-hour', '24-hour'] }
+        firstDayOfWeek: { type: string, enum: [monday, sunday] }
+        defaultView: { type: string, enum: [day, week, month, agenda] }
+        sidebarOpen: { type: boolean }
+
+    ApiMeta:
+      type: object
+      properties:
+        service: { type: string }
+        version: { type: string }
+        timezone: { type: string }
+        timeFormat: { type: string }
+        authentication:
+          type: object
+          properties:
+            required: { type: boolean, description: 是否强制鉴权 }
+            schemes:
+              type: array
+              items:
+                type: object
+                properties:
+                  type: { type: string, enum: [api_token, session_cookie] }
+                  header: { type: string }
+                  description: { type: string }
+            howToGetToken: { type: string }
+        onboarding:
+          type: object
+          description: 初始化引导状态。required 为 true 时该实例还不能用，需由人类在浏览器完成初始化。
+          properties:
+            required: { type: boolean }
+            endpoint: { type: string, description: '创建首个管理员的端点，如 POST /api/setup/admin' }
+            description: { type: string }
+        capabilities:
+          type: object
+          properties:
+            recurrence: { type: boolean }
+            multiUser: { type: boolean }
+            auth: { type: boolean }
+            dryRun: { type: boolean }
+            idempotency: { type: boolean }
+            batch: { type: boolean }
+            settings: { type: boolean }
+            trash: { type: boolean }
+            calendars: { type: boolean }
+            onboarding: { type: boolean, description: 是否提供浏览器初始化引导 }
+        limits:
+          type: object
+          properties:
+            maxBatchSize: { type: integer }
+            defaultLimit: { type: integer }
+            maxLimit: { type: integer }
+            maxTitleLength: { type: integer }
+            maxCalendars: { type: integer }
+            maxTokens: { type: integer }
+        enums:
+          type: object
+          properties:
+            colors: { type: array, items: { type: string } }
+            timeWindows: { type: array, items: { type: string } }
+            onConflict: { type: array, items: { type: string } }
+            deleteModes: { type: array, items: { type: string, enum: [soft, hard] } }
+            roles: { type: array, items: { type: string, enum: [admin, member] } }
+            errorCodes: { type: array, items: { type: string } }
+        endpoints:
+          type: array
+          items:
+            type: object
+            properties:
+              method: { type: string }
+              path: { type: string }
+              summary: { type: string }
+              sideEffect: { type: string, enum: [read, write] }
+              riskLevel: { type: string, enum: [safe, confirm, danger] }
+              auth: { type: boolean, description: 该端点是否需要凭据 }
+        quickstart:
+          type: array
+          description: 最小上手序列，照抄即可跑通一次完整读写。
+          items:
+            type: object
+            properties:
+              step: { type: integer }
+              request: { type: string, description: "例：GET /api/events?window=today" }
+              note: { type: string }
+        agentPrompt:
+          type: string
+          description: 一段可直接塞进系统提示的自描述文本。
+        docs:
+          type: object
+          properties:
+            protocol: { type: string }
+            openapi: { type: string }
+            brief: { type: string, description: 一页式简报的路径，如 /api/agent.md }

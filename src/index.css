@@ -1,0 +1,202 @@
+@import 'tailwindcss';
+
+/* Tailwind v4 默认忽略 node_modules，需手动把日历组件的样式纳入扫描 */
+@source '../node_modules/@ilamy/calendar/dist';
+
+/*
+ * 主题令牌：只保留一昼一夜两套，全部走 CSS 变量。
+ * 切换 <html data-theme> 即换肤，组件无需重新挂载。
+ * 日历组件本身不带样式，只消费 shadcn 语义类，因此换肤对它是透明的。
+ *
+ * 比例约定（全站统一，改这里等于改全站节奏）：
+ *   字号  12 / 13 / 14(基准) / 16 / 20
+ *   行高  正文 1.6，控件 1.4，标题 1.35
+ *   间距  4 的倍数，面板内边距 20，面板间 16
+ * 圆角刻意保持小而统一，维持包豪斯的几何感，不做圆润化。
+ */
+
+/* ── 白日：暖白纸感 + 近黑 + 克制的墨蓝 ─────────────── */
+:root,
+[data-theme='day'] {
+  --background: #f5f3ee;
+  --foreground: #191919;
+  --card: #fffefb;
+  --card-foreground: #191919;
+  --popover: #fffefb;
+  --popover-foreground: #191919;
+  --primary: #1f4e79;
+  --primary-foreground: #f8f7f3;
+  --secondary: #e8e5dd;
+  --secondary-foreground: #191919;
+  --muted: #ece9e2;
+  --muted-foreground: #67645e;
+  --accent: #e6e3da;
+  --accent-foreground: #191919;
+  --destructive: #a8321f;
+  --destructive-foreground: #fdf7f5;
+  --border: #d9d5cb;
+  --input: #d9d5cb;
+  --ring: #1f4e79;
+  --sidebar: #efece5;
+  --sidebar-foreground: #191919;
+  --overlay: rgba(25, 25, 25, 0.42);
+  --radius: 0.25rem;
+}
+
+/* ── 黑夜：低饱和深灰蓝 + 浅灰字 + 微蓝强调 ─────────── */
+[data-theme='night'],
+.dark {
+  --background: #1a1d21;
+  --foreground: #e3e5e9;
+  --card: #212529;
+  --card-foreground: #e3e5e9;
+  --popover: #212529;
+  --popover-foreground: #e3e5e9;
+  --primary: #7ba0c8;
+  --primary-foreground: #14171a;
+  --secondary: #2a2f36;
+  --secondary-foreground: #e3e5e9;
+  --muted: #262b31;
+  --muted-foreground: #9aa1ac;
+  --accent: #2e343b;
+  --accent-foreground: #e3e5e9;
+  --destructive: #c26b5f;
+  --destructive-foreground: #17191c;
+  --border: #333941;
+  --input: #333941;
+  --ring: #7ba0c8;
+  --sidebar: #1e2227;
+  --sidebar-foreground: #e3e5e9;
+  --overlay: rgba(6, 8, 10, 0.62);
+  --radius: 0.25rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+
+  --radius-xs: var(--radius);
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 0.125rem);
+  --radius-xl: calc(var(--radius) + 0.25rem);
+
+  /* 字号阶梯：与上面的「比例约定」一一对应 */
+  --text-2xs: 0.6875rem; /* 11px 仅用于极次要的角标 */
+  --text-xs: 0.75rem; /* 12px 说明文字 */
+  --text-sm: 0.8125rem; /* 13px 控件与列表 */
+  --text-base: 0.875rem; /* 14px 正文基准 */
+  --text-lg: 1rem; /* 16px 小标题 */
+  --text-xl: 1.25rem; /* 20px 页面标题 */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Maple Mono NF CN', 'Helvetica Neue', Helvetica, Arial, 'Microsoft YaHei', sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+/* 标题与控件收紧行高，正文保持 1.6 的呼吸感 */
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.35;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  line-height: 1.4;
+  color: inherit;
+}
+
+/* 键盘可达性：统一焦点环，鼠标点击不出现 */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 26%, transparent);
+}
+
+/* 细滚动条，避免在日历里出现粗重的系统滚动条 */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-foreground) 34%, transparent);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 52%, transparent);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/*
+ * 日历组件内部的微调。
+ * 组件只消费 shadcn 语义类，并挂了一批 data-* 钩子（已核对真实取值：
+ * data-slot / data-view / data-today / data-outside / data-selected / data-dragging）。
+ * 这里只做「比例与可读性」层面的小修，不改结构、不覆盖配色。
+ */
+[data-slot='calendar'] {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* 非本月/非当天的格子把文字压暗，但当天的标记要立得住 */
+[data-slot='calendar'] [data-outside='true'] {
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+
+/* 分钟刻度与时刻标签：等宽数字，纵向对齐更稳 */
+[data-slot='calendar'] [data-hour] {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+/* 拖拽中的日程块降低不透明度并给一个清晰的目标态 */
+[data-slot='calendar'] [data-dragging='true'] {
+  opacity: 0.55;
+}
+[data-slot='calendar'] [data-drop-target='true'] {
+  outline: 2px dashed var(--ring);
+  outline-offset: -2px;
+}

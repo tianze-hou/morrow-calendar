@@ -35,6 +35,16 @@ cd "$SRC_DIR"
 # 只把运行时依赖带到安装目录。显式写 --include=dev，避免部署 shell 里带着
 # NODE_ENV=production 时 npm 自动省略 dev 依赖。
 npm ci --include=dev --no-audit --no-fund
+
+# better-sqlite3 的预编译二进制要从 GitHub Releases 下载。服务器访问不到时会静默
+# 回退到 node-sqlite3-wasm，而 WASM 的 VFS 不支持 WAL 模式的生产库，服务会直接
+# 起不来（且报错信息看不出原因）。这里显式确认原生二进制在，缺了就地编译。
+if [ -d node_modules/better-sqlite3 ] &&
+   [ -z "$(ls node_modules/better-sqlite3/build/Release/*.node 2>/dev/null)" ]; then
+  log "better-sqlite3 缺原生二进制，就地编译（约 1 分钟）"
+  npm rebuild better-sqlite3 --build-from-source
+fi
+
 npm run build
 npm prune --omit=dev
 [ -f dist-server/index.mjs ] || die "后端构建产物缺失"
@@ -64,7 +74,9 @@ if [ ! -f "$ENV_FILE" ]; then
 PORT=${PORT:-8787}
 DB_PATH=${DATA_DIR}/calendar.db
 TZ_NAME=${TZ_NAME:-Asia/Shanghai}
-DB_DRIVER=${DB_DRIVER:-wasm}
+# 留空 = 自动：原生 better-sqlite3 优先，取不到再回退 WASM。
+# 不要写死 wasm —— WASM 驱动不支持 WAL 模式，生产库会打不开。
+DB_DRIVER=${DB_DRIVER:-}
 MAX_BATCH_SIZE=${MAX_BATCH_SIZE:-50}
 NODE_ENV=production
 EOF
@@ -75,7 +87,13 @@ fi
 
 # ── 6. systemd 服务 ────────────────────────────────────────────
 log "安装并启动 systemd 服务"
-install -m 0644 "$SRC_DIR/deploy/morrow-calendar.service" /etc/systemd/system/morrow-calendar.service
+# 服务文件里写的是常见路径 /usr/bin/node，但 node 实际可能装在 /usr/local/bin、
+# nvm 目录等地方。这里按本机实际路径替换，否则 systemd 会报 203/EXEC
+# （Failed to locate executable），表现为服务反复重启、健康检查永远不通过。
+NODE_BIN="$(command -v node)"
+sed "s#/usr/bin/node#${NODE_BIN}#g" "$SRC_DIR/deploy/morrow-calendar.service" \
+  > /etc/systemd/system/morrow-calendar.service
+chmod 0644 /etc/systemd/system/morrow-calendar.service
 systemctl daemon-reload
 systemctl enable morrow-calendar
 systemctl restart morrow-calendar

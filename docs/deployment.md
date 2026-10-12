@@ -274,6 +274,38 @@ systemctl start morrow-calendar
 
 ## 7. 升级与回滚
 
+两条路，按服务器情况选：**装好的生产实例用 7.1**（不需要 git，也不需要本地上传），服务器上有 git 工作副本且能直连 github.com 时用 7.2。
+
+### 7.1 在服务器上直接更新（生产实例推荐）
+
+```bash
+sudo morrow-update                  # 升到 GitHub 默认分支的最新版本
+sudo morrow-update --check          # 只看有没有新版本，不装
+sudo morrow-update v0.3.0           # 升到指定 tag / 分支 / commit
+sudo morrow-update --force          # 版本没变也重装一遍
+sudo morrow-update --no-backup      # 跳过升级前备份（不建议）
+```
+
+`morrow-update` 是 `deploy/update-from-github.sh` 的短命令入口（装在 `/usr/local/bin`）。也可以直接跑脚本本身。
+
+**为什么不用 `git pull`**：`github.com` 的 HTTPS 在不少网络里是不通的（`git clone` / `git ls-remote` 直接超时），但 `api.github.com` 和 `codeload.github.com` 通常通。所以脚本改成两步走——用 API 把分支名 / tag / commit 解析成确切的 commit sha，再从 codeload 下载该 sha 的源码包，然后交给 `deploy/deploy.sh` 走原有流程。仓库公开时全程免鉴权，**服务器上不需要放任何密钥**。
+
+脚本按顺序做这些事：
+
+1. 体检：root 权限、Node 版本、curl / tar / rsync、数据库不在代码目录内
+2. 解析远端版本，与 `$APP_DIR/.deploy-version` 里记录的本机版本比对，相同就直接退出
+3. 备份数据库（`deploy/backup.sh`，服务运行中也能安全备份）
+4. 下载源码包并校验（空包或 tar 解不开会中止）
+5. 把当前代码存为回滚点 `$PREV_DIR`（默认 `/opt/morrow-calendar.prev`，只存源码，不含 `node_modules`）
+6. `npm ci` → 构建 → 安装 → 重启 → 健康检查
+7. 记录新版本到 `.deploy-version`
+
+第 4 步之后任一步失败，会自动用回滚点重新部署一次；回滚也失败时会明确告诉你服务可能处于停止状态、该查什么日志。数据目录全程不碰。
+
+想固定线上版本就在本地打 tag（`git tag v0.3.0 && git push --tags`），服务器上 `sudo morrow-update v0.3.0`；回退就再执行一次旧 tag。
+
+### 7.2 从 git 工作副本更新（服务器上有仓库副本时）
+
 一次性做完「备份 → 拉版本 → 构建 → 重启 → 健康检查」，失败会自动切回上一个版本：
 
 ```bash
@@ -298,7 +330,7 @@ git checkout <上一个版本> && sudo bash deploy/deploy.sh
 
 数据库 schema 变更由 `user_version` 迁移机制自动处理。当前版本是 3：新增 `users` / `sessions` / `api_tokens` / `calendars` 四张表，`events` 补了 `user_id`、`deleted_at` 列与索引。旧库升级无需手工干预，升级到 v3 后第一次启动会自动创建管理员并接管历史数据。升级前建议先跑一次 `deploy/backup.sh`。
 
-> 三处环境怎么对齐：代码只有一份真相源（GitHub），本地写、推远端、服务器拉取，三处都不手改线上文件。数据（`calendar.db`）不进 git、也不进服务器上的代码目录，因此「同步代码」永远不会碰数据。想让线上固定某个版本，就在本地 `git tag v0.3.0 && git push --tags`，服务器上 `update.sh v0.3.0` 即可；要回退就 `update.sh v0.2.0`。
+> 三处环境怎么对齐：代码只有一份真相源（GitHub），本地写、推远端、服务器拉取，三处都不手改线上文件。数据（`calendar.db`）不进 git、也不进服务器上的代码目录，因此「同步代码」永远不会碰数据。想让线上固定某个版本，就在本地 `git tag v0.3.0 && git push --tags`，服务器上 `sudo morrow-update v0.3.0` 即可；要回退就再执行一次旧 tag。
 
 ## 8. 健康检查与验收
 

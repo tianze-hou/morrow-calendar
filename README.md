@@ -133,8 +133,12 @@ npm run passwd -- --user admin --password '新口令'
 已经在服务器上跑起来之后，升级到最新版本用一条命令（自动备份、健康检查，失败自动回滚，数据不受影响）：
 
 ```bash
-cd /path/to/source && sudo bash deploy/update.sh          # 或 update.sh v0.3.0 指定版本
+sudo morrow-update                 # 从 GitHub 拉最新版本并重新部署
+sudo morrow-update --check         # 只看有没有新版本
+sudo morrow-update v0.3.0          # 指定 tag / 分支 / commit
 ```
+
+这套不走 `git pull`，而是用 `api.github.com` 解析版本、`codeload.github.com` 下载源码包，服务器不需要放密钥、也不需要 git 工作副本——`github.com` 的 HTTPS 在很多网络里不通，那两个域名通常通。服务器上只有 git 工作副本时用 `deploy/update.sh`。
 
 ## 命令一览
 

@@ -367,7 +367,10 @@ SCHEDULE_API_BASE=https://你的域名/api npm run smoke
 
 | 现象 | 排查 |
 | --- | --- |
-| 启动报 `Cannot find module 'better-sqlite3'` | 留空 `DB_DRIVER` 会自动回退 WASM；若显式写了 `better-sqlite3` 则改为 `wasm`，或装编译工具链后 `npm ci` |
+| 启动报 `Cannot find module 'better-sqlite3'` | `DB_DRIVER` 留空即为自动（原生优先，取不到才回退 WASM）；装好编译工具链后 `npm rebuild better-sqlite3 --build-from-source` 可恢复原生 |
+| 启动报 `unable to open database file` | 生产库是 WAL 模式，而驱动回退到了 WASM（WASM 的 VFS 不支持 WAL）。看 `/api/health` 的 `storage.driver` 是不是 `better-sqlite3`，不是就重新编译原生模块并把 `DB_DRIVER` 留空 |
+| 服务反复重启，日志 `203/EXEC` 或 `Failed to locate executable /usr/bin/node` | node 不在 `/usr/bin`（常见于装在 `/usr/local/bin`）。`deploy.sh` 会按 `command -v node` 的实际路径改写 systemd 单元，改完 `systemctl daemon-reload && systemctl restart morrow-calendar` |
+| `morrow-update` 报无法访问 `api.github.com` | 服务器到 GitHub 不通。分别试 `curl -sS https://api.github.com` 与 `curl -sSIL https://codeload.github.com/tianze-hou/morrow-calendar/tar.gz/main`；注意 `github.com` 主站不通不影响本脚本，它只依赖后两个域名 |
 | 日志出现「未能加载 better-sqlite3，回退到 node-sqlite3-wasm」 | 属于预期兜底，不是错误；想确认真实驱动看启动横幅的「存储」行或 `/api/health` 的 `storage.driver` |
 | WASM 驱动间歇报 `disk I/O error` | 删掉 `calendar.db-journal` / `calendar.db.lock` 残留后重启；根治方式是启用 `better-sqlite3` |
 | 日志报 `Dynamic require of "path"` | 用了旧构建命令；确认 `build:server` 带 `--packages=external` |

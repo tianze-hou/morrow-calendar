@@ -53,10 +53,10 @@
   },
   "optionalDependencies": {
     "better-sqlite3": "^13.0.3",
-    "node-sqlite3-wasm": "^0.8.60"
+    "node-sqlite3-wasm": "^0.8.60",
+    "@rollup/rollup-win32-x64-msvc": "^4.64.5"
   },
   "devDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.64.5",
     "@tailwindcss/vite": "^4.1.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",

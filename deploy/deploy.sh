@@ -30,8 +30,13 @@ log "Node $(node -v) / npm $(npm -v)"
 # ── 2. 构建 ────────────────────────────────────────────────────
 log "安装依赖并构建"
 cd "$SRC_DIR"
-npm ci --omit=dev --no-audit --no-fund
+# 这里必须装「全量」依赖：构建要用到 devDependencies（vite / tsc / esbuild），
+# 先 --omit=dev 再 build 会直接失败。所以顺序是：全量装 → 构建 → 剪掉 dev，
+# 只把运行时依赖带到安装目录。显式写 --include=dev，避免部署 shell 里带着
+# NODE_ENV=production 时 npm 自动省略 dev 依赖。
+npm ci --include=dev --no-audit --no-fund
 npm run build
+npm prune --omit=dev
 [ -f dist-server/index.mjs ] || die "后端构建产物缺失"
 [ -f dist/index.html ] || die "前端构建产物缺失"
 

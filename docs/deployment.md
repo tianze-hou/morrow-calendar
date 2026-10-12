@@ -14,6 +14,7 @@
 | SQLite 驱动 | 二选一 | 默认优先 `better-sqlite3`（原生，Node 22 有预编译包，通常无需工具链）；装不上会打印中文警告并自动回退 `node-sqlite3-wasm`（纯 WASM，零编译） |
 | curl | 任意 | 部署脚本用它做健康检查 |
 | rsync | 任意 | 部署脚本用它同步产物 |
+| git | 任意 | 用 `deploy/update.sh` 在服务器上就地升级时需要（拉取目标版本、记录回滚点） |
 | systemd 或 pm2 | 二选一 | 进程守护，脚本默认走 systemd |
 | Caddy（可选） | 2.x | 反向代理 + 自动 HTTPS |
 
@@ -35,10 +36,17 @@ WASM 驱动使用 `journal_mode = DELETE` 而不是 WAL，因为 WAL 在该 VFS 
 ## 3. 构建
 
 ```bash
-# 在开发机上（或直接在服务器上）
-npm ci                 # 严格按 lockfile 安装
+# 在开发机上，或直接在服务器上
+npm ci                 # 严格按 lockfile 安装（含 devDependencies，构建需要）
 npm run build          # = 前端 vite build + 后端 esbuild 打包
 ```
+
+> 服务器可以自己构建，不必依赖开发机打包上传。早前 `deploy.sh` 之所以弃用，是因为三个坑，现已全部修掉：
+> ① 它先 `npm ci --omit=dev` 再 build，而构建需要 vite/tsc/esbuild，必然失败——现在改成「全量装（`--include=dev`）→ 构建 → `npm prune --omit=dev`」；
+> ② `@rollup/rollup-win32-x64-msvc` 是 Windows 专用二进制，留在 `devDependencies` 里会让 Linux 上的 `npm ci` 直接 `EBADPLATFORM`——已挪到 `optionalDependencies`（带 `os: ["win32"]`，Linux 自动跳过、Windows 照常装）；
+> ③ lockfile 是在 Windows 上生成的，只记了 Windows 的平台二进制，缺 `@rollup/rollup-linux-x64-gnu`、`lightningcss-linux-x64-gnu` 等，Linux 上 `npm ci` 装完会在构建时找不到原生模块——已把全部平台的二进制条目补进 lock（纯追加，未改任何依赖版本）。
+>
+> 低配机器（如 1.9G 内存）构建若因内存不足失败，先加一块 swap 再重试；`vite build` 这类前端构建最吃内存。
 
 产物：
 

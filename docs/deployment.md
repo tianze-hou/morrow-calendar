@@ -196,16 +196,31 @@ systemctl start morrow-calendar
 
 ## 7. 升级与回滚
 
+一次性做完「备份 → 拉版本 → 构建 → 重启 → 健康检查」，失败会自动切回上一个版本：
+
 ```bash
-# 升级
+cd /path/to/source
+sudo bash deploy/update.sh              # 升级到当前分支的远端最新
+sudo bash deploy/update.sh v0.3.0       # 或指定 tag / 分支 / commit
+sudo bash deploy/update.sh --no-pull    # 不拉代码，只按当前代码重新部署
+```
+
+脚本在动手前会先体检并拦住三类问题：Node 版本过低、工作副本有未提交改动、**数据库文件落在代码目录里**（后者会让 git 操作有覆盖数据的风险，必须先移到 `DATA_DIR`）。升级前的数据库备份落在 `/var/backups/morrow-calendar/calendar-preupdate-<时间戳>.db.gz`。
+
+手动分步做也可以（`update.sh` 只是把下面这几步串起来）：
+
+```bash
 cd /path/to/source && git pull
-sudo bash deploy/deploy.sh          # 会重建产物并 restart
+sudo bash deploy/backup.sh          # 先备份
+sudo bash deploy/deploy.sh          # 重建产物并 restart
 
 # 回滚：切回上一个提交重新执行部署即可（数据目录独立，不受影响）
 git checkout <上一个版本> && sudo bash deploy/deploy.sh
 ```
 
 数据库 schema 变更由 `user_version` 迁移机制自动处理。当前版本是 3：新增 `users` / `sessions` / `api_tokens` / `calendars` 四张表，`events` 补了 `user_id`、`deleted_at` 列与索引。旧库升级无需手工干预，升级到 v3 后第一次启动会自动创建管理员并接管历史数据。升级前建议先跑一次 `deploy/backup.sh`。
+
+> 三处环境怎么对齐：代码只有一份真相源（GitHub），本地写、推远端、服务器拉取，三处都不手改线上文件。数据（`calendar.db`）不进 git、也不进服务器上的代码目录，因此「同步代码」永远不会碰数据。想让线上固定某个版本，就在本地 `git tag v0.3.0 && git push --tags`，服务器上 `update.sh v0.3.0` 即可；要回退就 `update.sh v0.2.0`。
 
 ## 8. 健康检查与验收
 

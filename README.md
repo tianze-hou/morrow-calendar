@@ -128,6 +128,12 @@ npm run passwd -- --user admin --password '新口令'
 
 不用 AI 也行，同样的步骤见 [`docs/deployment.md`](docs/deployment.md)——那里有一键 systemd 部署脚本和完整配置项。
 
+已经在服务器上跑起来之后，升级到最新版本用一条命令（自动备份、健康检查，失败自动回滚，数据不受影响）：
+
+```bash
+cd /path/to/source && sudo bash deploy/update.sh          # 或 update.sh v0.3.0 指定版本
+```
+
 ## 命令一览
 
 | 命令 | 作用 |

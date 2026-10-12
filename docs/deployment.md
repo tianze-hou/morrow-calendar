@@ -183,6 +183,76 @@ caddy fmt --overwrite /etc/caddy/Caddyfile && systemctl reload caddy
 
 关于 Caddy 前置认证：现在应用自己就有登录与令牌，不需要再叠一层 `basic_auth`。如果仍要加，注意 `basic_auth` 会连 `/api` 一起拦，AI Agent 将调不动接口，届时应把 `/api*` 单独放行。更简单的做法是直接用应用自己的 `AUTH_ENABLED=true` 加令牌。
 
+### 5.5 MCP 端点的反代要点（必读）
+
+MCP 端点是 `POST /api/mcp`，响应默认走 SSE（`text/event-stream`）。它和普通的 JSON 接口有一个关键差别：
+
+> **反代不能对它做响应缓冲，否则客户端会一直挂着不返回。**
+
+上面的 `encode gzip` 就是缓冲的来源之一。gzip 要攒够一个块才输出，而 SSE 是「有数据就立刻推一段」，两者天生冲突。表现很典型：`curl` 直接连 8787 秒回，走反代就转圈超时。
+
+Caddy 的正确写法是把这条路径单独摘出来、关掉 flush 缓冲：
+
+```caddyfile
+schedule.example.com {
+	encode gzip
+
+	# MCP：SSE 不能被缓冲，单独处理
+	@mcp path /api/mcp
+	handle @mcp {
+		reverse_proxy 127.0.0.1:8787 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8787
+	}
+}
+```
+
+如果用 nginx，同样要为这个 location 关掉缓冲与 gzip：
+
+```nginx
+location /api/mcp {
+    proxy_pass         http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header   Host $host;
+    proxy_set_header   Authorization $http_authorization;
+
+    proxy_buffering    off;   # 关键：不要攒包
+    gzip               off;   # 关键：SSE 不能压缩
+    proxy_read_timeout 300s;
+}
+```
+
+改完务必重载（`systemctl reload caddy` / `nginx -s reload`）并用下面的命令验证——**必须从域名而不是 127.0.0.1 访问，否则测不到反代这一层**：
+
+```bash
+# 未鉴权：应返回 JSON-RPC 格式的 401（不是 REST 的信封）
+curl -i -X POST https://<你的域名>/api/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# 带令牌：应在 5 秒内返回一个 SSE 包，内含 17 个工具的清单
+curl -s --max-time 15 -X POST https://<你的域名>/api/mcp \
+  -H "Authorization: Bearer <令牌>" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 400
+```
+
+正常响应形如：
+
+```
+event: message
+data: {"result":{"tools":[{"name":"list_events",...
+
+```
+
+如果第二条命令卡住超过 10 秒才出结果，或者干脆超时，就是反代在缓冲，回到上面检查 `flush_interval` / `proxy_buffering`。
+
 ## 6. 数据与备份
 
 ```bash

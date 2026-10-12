@@ -1,26 +1,32 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import type { CreateEventInput, ScheduleEvent, WriteResult } from '../../../shared/types';
 import { config } from '../config';
-import {
-  ApiError,
-  badRequest,
-  conflictRejected,
-  notFound,
-  versionConflict,
-} from '../lib/errors';
-import { parseInstant, resolveWindow, formatInTz, toUtcIso, dayjs } from '../lib/time';
+import { ApiError, conflictRejected, notFound, versionConflict } from '../lib/errors';
 import { currentUser } from '../middleware/auth';
 import * as repo from '../repository/events';
 import { resolveCalendarId } from '../repository/calendars';
 import {
   batchSchema,
   createEventSchema,
-  listQuerySchema,
   replaceEventSchema,
   updateEventSchema,
-  writeQuerySchema,
   toValidationError,
 } from '../validation';
+import {
+  buildListFilters,
+  camelizeQuery,
+  detectWarnings,
+  findOverlapPairs,
+  normalizeTimes,
+  parseIfMatch,
+  parseCalendarIds,
+  parseListOptions,
+  parseWriteQuery,
+  projectEvent,
+  projectNew,
+  resolvePatchTimes,
+  resolveRange,
+} from '../services/events';
 
 const router = Router();
 
@@ -36,187 +42,10 @@ const ok = <T>(res: Response, data: T, meta?: Record<string, unknown>) =>
 
 /* ------------------------------------------------------------------ helpers */
 
-/** query 参数同时接受 snake_case 与 camelCase（AI 两种风格都可能用）。 */
-function camelizeQuery(query: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(query)) {
-    out[key.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())] = value;
-  }
-  return out;
-}
-
-function parseCalendarIds(raw: string | undefined): string[] | undefined {
-  if (raw === undefined) return undefined;
-  const list = raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return list;
-}
-
-interface RangeResolution {
-  from?: string;
-  to?: string;
-  /** 供 AI 校验：最终实际生效的区间（UTC ISO）。 */
-  resolved: { from?: string; to?: string; source: 'explicit' | 'window' | 'none' };
-}
-
-function resolveRange(query: Record<string, unknown>): RangeResolution {
-  const parsed = listQuerySchema.safeParse(query);
-  if (!parsed.success) toValidationError(parsed.error);
-
-  const tz = config.timezone;
-  const { from, to, window } = parsed.data;
-
-  if (from || to) {
-    const fromDate = from ? parseInstant(from, tz) : undefined;
-    const toDate = to ? parseInstant(to, tz) : undefined;
-    if (fromDate && toDate && toDate.getTime() <= fromDate.getTime()) {
-      throw badRequest('to 必须晚于 from', '交换两个参数或改用 window=today 之类的相对窗口。');
-    }
-    return {
-      from: fromDate ? toUtcIso(fromDate) : undefined,
-      to: toDate ? toUtcIso(toDate) : undefined,
-      resolved: {
-        from: fromDate ? toUtcIso(fromDate) : undefined,
-        to: toDate ? toUtcIso(toDate) : undefined,
-        source: 'explicit',
-      },
-    };
-  }
-
-  if (window) {
-    const r = resolveWindow(window, tz);
-    return { from: r.from, to: r.to, resolved: { ...r, source: 'window' } };
-  }
-
-  return { resolved: { source: 'none' } };
-}
-
-interface NormalizedTimes {
-  start: Date;
-  end: Date;
-  tz: string;
-  allDay: boolean;
-}
-
-function normalizeTimes(input: CreateEventInput): NormalizedTimes {
-  const tz = input.timezone ?? config.timezone;
-  let start = parseInstant(input.start, tz);
-  let end = parseInstant(input.end, tz);
-  const allDay = input.allDay ?? false;
-
-  if (allDay) {
-    // 全天日程：start 归到当日 00:00:00，end 归到当日 23:59:59（闭区间语义，便于渲染）
-    start = dayjs(start).tz(tz).startOf('day').toDate();
-    end = dayjs(end).tz(tz).endOf('day').toDate();
-  }
-
-  if (end.getTime() <= start.getTime()) {
-    throw badRequest(
-      'end 必须晚于 start',
-      '检查起止时间；全天日程只需传日期，服务端会自动归一化。',
-    );
-  }
-
-  return { start, end, tz, allDay };
-}
-
-type Warning = NonNullable<WriteResult<unknown>['warnings']>[number];
-
-async function detectWarnings(
-  userId: string,
-  times: NormalizedTimes,
-  title: string,
-  excludeId?: string,
-): Promise<Warning[]> {
-  const warnings: Warning[] = [];
-
-  const conflicts = await repo.findConflicts(userId, times.start, times.end, excludeId);
-  if (conflicts.length > 0) {
-    warnings.push({
-      code: 'TIME_CONFLICT',
-      message: `与 ${conflicts.length} 条日程时间重叠`,
-      conflicts,
-    });
-  }
-
-  const duplicates = await repo.findDuplicates(userId, title, times.start, times.end);
-  const dup = duplicates.find((d) => d.id !== excludeId);
-  if (dup) {
-    warnings.push({
-      code: 'DUPLICATE_SUSPECTED',
-      message: `已存在同标题同时间的日程（id=${dup.id}）`,
-    });
-  }
-
-  return warnings;
-}
-
-function parseWriteQuery(query: Record<string, unknown>) {
-  const parsed = writeQuerySchema.safeParse(query);
-  if (!parsed.success) toValidationError(parsed.error);
-  return {
-    dryRun: parsed.data.dryRun ?? false,
-    onConflict: parsed.data.onConflict ?? 'allow',
-    mode: parsed.data.mode ?? 'soft',
-  };
-}
-
-/** 解析 If-Match 头（支持 5 / "5" / W/"5"）。 */
-function parseIfMatch(header: string | undefined): number | undefined {
-  if (!header) return undefined;
-  const cleaned = header.replace(/^W\//, '').replace(/"/g, '').trim();
-  const n = Number(cleaned);
-  return Number.isInteger(n) && n >= 0 ? n : undefined;
-}
-
-function projectEvent(base: ScheduleEvent, patch: Partial<CreateEventInput>): ScheduleEvent {
-  const merged = { ...base, ...patch } as ScheduleEvent;
-  if (patch.start || patch.end || patch.timezone || patch.allDay !== undefined) {
-    const tz = patch.timezone ?? base.timezone;
-    const times = normalizeTimes({
-      title: merged.title,
-      start: patch.start ?? base.start,
-      end: patch.end ?? base.end,
-      allDay: patch.allDay ?? base.allDay,
-      timezone: tz,
-    });
-    merged.timezone = tz;
-    merged.allDay = times.allDay;
-    merged.start = formatInTz(times.start, tz);
-    merged.end = formatInTz(times.end, tz);
-  }
-  return merged;
-}
-
-/** 试运行时的投影对象：不落库，但要长得和真实对象一样，AI 才好比对。 */
-function projectNew(
-  input: CreateEventInput,
-  times: NormalizedTimes,
-  calendarId: string,
-  ownerId: string,
-): ScheduleEvent {
-  return {
-    id: `dryrun_${crypto.randomUUID().slice(0, 8)}`,
-    ownerId,
-    title: input.title,
-    start: formatInTz(times.start, times.tz),
-    end: formatInTz(times.end, times.tz),
-    allDay: times.allDay,
-    description: input.description,
-    location: input.location,
-    color: input.color,
-    calendarId,
-    timezone: times.tz,
-    rrule: null,
-    exdates: [],
-    deletedAt: null,
-    version: 1,
-    createdAt: formatInTz(new Date(), times.tz),
-    updatedAt: formatInTz(new Date(), times.tz),
-  };
-}
+/**
+ * 业务规则全部在 services/events.ts 里，本文件不再自己定义。
+ * REST 与 MCP 共用同一份实现，改一处两边同时生效。
+ */
 
 /* ------------------------------------------------------------------- routes */
 
@@ -225,32 +54,18 @@ router.get(
   '/',
   wrap(async (req, res) => {
     const user = currentUser(req);
-    const query = listQuerySchema.safeParse(camelizeQuery(req.query as Record<string, unknown>));
-    if (!query.success) toValidationError(query.error);
-
-    const range = resolveRange(camelizeQuery(req.query as Record<string, unknown>));
-    const filters = {
-      userId: user.id,
-      from: range.from,
-      to: range.to,
-      q: query.data.q,
-      calendarId: query.data.calendarId,
-      calendarIds: parseCalendarIds(query.data.calendarIds),
-      deleted: query.data.deleted ?? false,
-    };
-    const events = await repo.listEvents({
-      ...filters,
-      limit: query.data.limit,
-      offset: query.data.offset,
-      order: query.data.order,
-    });
+    const query = camelizeQuery(req.query as Record<string, unknown>);
+    const filters = buildListFilters(user.id, query);
+    const options = parseListOptions(query);
+    const events = await repo.listEvents({ ...filters, ...options });
     const total = await repo.countEvents(filters);
+    const range = resolveRange(query);
 
     ok(res, events, {
       count: events.length,
       total,
-      limit: query.data.limit ?? config.limits.defaultLimit,
-      offset: query.data.offset ?? 0,
+      limit: options.limit ?? config.limits.defaultLimit,
+      offset: options.offset ?? 0,
       timezone: config.timezone,
       scope: { ownerId: user.id, deleted: filters.deleted },
       resolvedRange: range.resolved,
@@ -310,19 +125,7 @@ router.get(
       limit: config.limits.maxLimit,
     });
 
-    const pairs: Array<{ a: ScheduleEvent; b: ScheduleEvent; overlapMinutes: number }> = [];
-    for (let i = 0; i < events.length; i += 1) {
-      for (let j = i + 1; j < events.length; j += 1) {
-        const a = events[i];
-        const b = events[j];
-        const overlapMs =
-          Math.min(new Date(a.end).getTime(), new Date(b.end).getTime()) -
-          Math.max(new Date(a.start).getTime(), new Date(b.start).getTime());
-        if (overlapMs > 0) {
-          pairs.push({ a, b, overlapMinutes: Math.round(overlapMs / 60000) });
-        }
-      }
-    }
+    const pairs = findOverlapPairs(events);
 
     ok(res, pairs, { count: pairs.length, scanned: events.length, resolvedRange: range.resolved });
   }),
@@ -419,21 +222,7 @@ router.post(
             projected.calendarId = await resolveCalendarId(user.id, op.data.calendarId);
           }
 
-          const times =
-            op.data.start || op.data.end || op.data.allDay !== undefined
-              ? normalizeTimes({
-                  title: projected.title,
-                  start: projected.start,
-                  end: projected.end,
-                  allDay: projected.allDay,
-                  timezone: projected.timezone,
-                })
-              : {
-                  start: new Date(current.start),
-                  end: new Date(current.end),
-                  tz: current.timezone,
-                  allDay: current.allDay,
-                };
+          const times = resolvePatchTimes(projected, op.data);
 
           const warnings = await detectWarnings(user.id, times, projected.title, op.id);
           if (onConflict === 'reject' && warnings.some((w) => w.code === 'TIME_CONFLICT')) {
@@ -725,21 +514,7 @@ async function applyUpdate(
     projected.calendarId = await resolveCalendarId(user.id, patch.calendarId);
   }
 
-  const times =
-    patch.start || patch.end || patch.allDay !== undefined || patch.timezone
-      ? normalizeTimes({
-          title: projected.title,
-          start: projected.start,
-          end: projected.end,
-          allDay: projected.allDay,
-          timezone: projected.timezone,
-        })
-      : {
-          start: new Date(current.start),
-          end: new Date(current.end),
-          tz: current.timezone,
-          allDay: current.allDay,
-        };
+  const times = resolvePatchTimes(projected, patch);
 
   const warnings = await detectWarnings(user.id, times, projected.title, current.id);
   if (onConflict === 'reject' && warnings.some((w) => w.code === 'TIME_CONFLICT')) {

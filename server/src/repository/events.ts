@@ -99,7 +99,9 @@ function buildWhere(opts: Omit<ListOptions, 'limit' | 'offset' | 'order'>): {
   }
 
   if (opts.q) {
-    where.push('(title LIKE ? OR IFNULL(description, "") LIKE ? OR IFNULL(location, "") LIKE ?)');
+    // 注意：SQLite 里双引号是标识符引号，这里的空串必须用单引号，
+    // 写成 "" 会被当成列名，报 no such column: ""
+    where.push("(title LIKE ? OR IFNULL(description, '') LIKE ? OR IFNULL(location, '') LIKE ?)");
     const like = `%${opts.q}%`;
     params.push(like, like, like);
   }

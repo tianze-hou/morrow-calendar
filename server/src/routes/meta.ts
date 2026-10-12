@@ -13,6 +13,7 @@ import {
 import { API_VERSION, config, projectRoot } from '../config';
 import { getDb } from '../db/index';
 import { countUsers } from '../repository/users';
+import { TOOL_NAMES } from '../mcp/tools';
 
 const router = Router();
 
@@ -164,6 +165,19 @@ function buildMeta(needsSetup: boolean): ApiMeta {
     endpoints: ENDPOINT_CATALOG,
     quickstart: QUICKSTART,
     agentPrompt: AGENT_PROMPT,
+    mcp: {
+      enabled: true,
+      endpoint: '/api/mcp',
+      transport: ['http'],
+      description:
+        'Model Context Protocol 端点：把日程能力暴露成可被 AI 客户端自动发现的工具。' +
+        '与 REST 共用同一份业务逻辑，同一枚令牌两个入口都能用。',
+      tools: [...TOOL_NAMES],
+      authNote: '沿用 REST 的令牌，不需要单独签发：Authorization: Bearer <令牌>。',
+      note:
+        'ChatGPT / Claude Desktop / Cursor / Claude Code 直接填 https://<你的域名>/api/mcp 即可接入；' +
+        '写操作默认试运行，必须显式传 dry_run=false 才会落库。',
+    },
     docs: {
       protocol: 'docs/api-protocol.md',
       openapi: '/api/openapi.yaml',
@@ -225,6 +239,18 @@ ${quickstart}
 | 端点 | 风险 | 需登录 | 说明 |
 | --- | --- | --- | --- |
 ${endpointTable}
+
+## MCP 接入（支持工具协议的客户端走这条，更省事）
+
+${meta.mcp.description}
+
+- 端点：\`POST ${meta.mcp.endpoint}\`（JSON-RPC 2.0 over HTTP，一个 URL 就够）
+- 鉴权：${meta.mcp.authNote}
+- 工具：${meta.mcp.tools.join('、')}
+- ${meta.mcp.note}
+
+ChatGPT / Claude Desktop / Cursor / Claude Code 在「添加 MCP 服务器」处填上这个 URL 即可，
+不用读协议文档、不用手工描述接口。客户端不支持 MCP 时照上面的 REST 端点调用，能力与鉴权完全一致。
 
 ## 机器可读协议
 

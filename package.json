@@ -44,17 +44,21 @@
   },
   "dependencies": {
     "@ilamy/calendar": "^3.2.1",
+    "@modelcontextprotocol/express": "^2.0.2",
+    "@modelcontextprotocol/node": "^2.1.1",
+    "@modelcontextprotocol/server": "^2.3.1",
     "cors": "^2.8.5",
     "dayjs": "^1.11.20",
     "express": "^4.21.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zod4": "npm:zod@^4.6.7"
   },
   "optionalDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.64.5",
     "better-sqlite3": "^13.0.3",
-    "node-sqlite3-wasm": "^0.8.60",
-    "@rollup/rollup-win32-x64-msvc": "^4.64.5"
+    "node-sqlite3-wasm": "^0.8.60"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",

@@ -431,4 +431,24 @@ export interface ApiMeta {
   /** 一段可直接塞进系统提示的自描述文本，语言与语气都已调好。 */
   agentPrompt: string;
   docs: { protocol: string; openapi: string; brief: string };
+  /**
+   * MCP（Model Context Protocol）端点自描述。
+   *
+   * 它与上面的 REST 端点共用同一套业务实现，只是给 AI 客户端的另一条入口：
+   * REST 适合 curl 与脚本，MCP 适合 ChatGPT / Claude Desktop / Cursor 这类
+   * 支持工具发现的客户端——连上就能自己列出能力，不必读协议文档。
+   */
+  mcp: {
+    enabled: boolean;
+    /** MCP 端点路径（HTTP POST，JSON-RPC 2.0） */
+    endpoint: string;
+    transport: string[];
+    description: string;
+    /** 已注册的 tool 名，即客户端 tools/list 会返回的内容 */
+    tools: string[];
+    /** MCP 走的是同一套令牌，无需另开凭据 */
+    authNote: string;
+    /** 给模型的接入提示 */
+    note: string;
+  };
 }

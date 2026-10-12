@@ -11,6 +11,15 @@ description: 操作日程系统 morrow calendar（@ilamy/calendar 前端 + AI-na
 
 ## 1. 连接信息与环境探测
 
+**先判断有没有 MCP。** 本服务内置了 MCP 端点（`POST {BASE}/mcp`，去掉 `/api` 就是——例 `https://example.com/api` 对应 `https://example.com/api/mcp`）。
+如果你的客户端支持 MCP，**优先用它**：连上就会自己列出工具与入参说明，不用读下面这些 REST 路径。
+MCP 与 REST 能力完全相同、共用同一份业务实现和同一枚令牌；下面所有规则（风险分级、dry_run、回收站、时间处理）在 MCP 里一样适用，只是参数从 query 变成工具入参。
+注意 MCP 的写操作**默认是试运行**，必须显式传 `dry_run: false` 才会真的写入。
+
+确认方式：`GET {BASE}/meta` 返回的 `mcp.enabled` 为 `true` 就说明可用，`mcp.tools` 是全部工具名。
+
+客户端不支持 MCP 时，按下面这套 REST 走：
+
 - 服务地址由环境变量 `SCHEDULE_API_BASE` 指定。
   - 已设置就直接用它，后面所有路径都拼在它后面。
   - 没设置就依次试 `http://127.0.0.1:8787/api`、`http://localhost:8787/api`。

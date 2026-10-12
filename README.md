@@ -37,6 +37,8 @@
 
 **面向 Agent 的协作规则也开源。** [`skills/morrow-calendar/SKILL.md`](skills/morrow-calendar/SKILL.md) 是一份写给 Agent 看的操作手册——确认流程、风险分级、时间与冲突处理、禁止事项。可以直接作为 skill 装进支持 skill 的客户端。
 
+**原生支持 MCP。** 除了 REST，服务端内置了 Model Context Protocol 端点（[`/api/mcp`](#原生-mcp-接入)）。支持工具协议的客户端——ChatGPT、Claude Desktop、Cursor、Claude Code——填一个 URL 就能连上，自己发现能力，不用读协议文档，也不用手工描述每个接口。上面这些设计（dry_run、风险分级、回收站）在 MCP 里一样生效，而且写操作**默认就是试运行**，想真正落库必须显式传 `dry_run: false`。
+
 ## 功能
 
 | 模块 | 能力 |
@@ -168,7 +170,9 @@ morrow-calendar/
 │   ├── lib/                   时间、口令、令牌、cookie、错误
 │   ├── middleware/auth.ts     身份解析（令牌 / 会话 / 本机隐式用户）
 │   ├── repository/            users · sessions · tokens · calendars · events · settings
+│   ├── services/              与 Express 无关的业务规则层，REST 与 MCP 共用
 │   ├── routes/                meta · setup · auth · users · tokens · calendars · events · settings
+│   ├── mcp/                   MCP 端点：身份桥接 · 工具注册 · 端点工厂
 │   └── scripts/               seed · smoke · token · passwd
 ├── src/                       前端：App / 侧栏 / 弹窗 / 设置 / 回收站 / 初始化 / 登录
 │   ├── api/client.ts          唯一的接口调用入口
@@ -181,6 +185,54 @@ morrow-calendar/
 ```
 
 ## AI 怎么用这套接口
+
+有两条入口，**能力完全相同**，差别只在适合谁用：
+
+| | REST 接口 | MCP 端点 |
+| --- | --- | --- |
+| 地址 | `https://<域名>/api` | `https://<域名>/api/mcp` |
+| 适合 | curl、脚本、自己的代码 | ChatGPT / Claude Desktop / Cursor / Claude Code 等支持工具发现的客户端 |
+| 上手成本 | 要读协议文档才知道有什么能力 | 连上就会自己列出 17 个工具 |
+| 鉴权 | `Authorization: Bearer <令牌>` | 同一枚令牌，无需另开凭据 |
+
+两者**共用同一份 service 与 repository**，所以不会出现「MCP 删了但 REST 报错」这种两套实现打架的情况。MCP 的存在并不让 REST 过时——前端页面本身就跑在 REST 上。
+
+### 原生 MCP 接入
+
+这是一个 HTTP 类型的 MCP 服务器，端点：`POST /api/mcp`（JSON-RPC 2.0）。
+
+**客户端怎么填：**
+
+```jsonc
+// Claude Desktop / Cursor / Claude Code 的 mcpServers 配置
+{
+  "mcpServers": {
+    "morrow-calendar": {
+      "url": "https://<你的域名>/api/mcp",
+      "headers": { "Authorization": "Bearer <你的令牌>" }
+    }
+  }
+}
+```
+
+> ChatGPT 走 Settings → Connectors 添加自定义连接器，**要求公网 HTTPS**，且对个人版可能限制为只读工具（写工具可能不触发），详见后文「已知边界」。
+
+**最重要的一条约定**：写操作默认试运行。不传 `dry_run` 只返回「将要发生什么」而不落库，必须显式传 `dry_run: false` 才会真正写入。这样即便对面模型忘了先预览，也不会盲改你的日程。
+
+已注册的工具（17 个）：
+
+| 分组 | 工具 |
+| --- | --- |
+| 日程读取 | `list_events` `get_event` `find_conflicts` `list_trash` |
+| 日程写入 | `create_event` `update_event` `delete_event` `restore_event` `purge_event` `empty_trash` `batch_events` |
+| 日历分组 | `list_calendars` `create_calendar` `update_calendar` `delete_calendar` |
+| 界面设置 | `get_settings` `update_settings` |
+
+另外还提供一个资源 `morrow://service-info`，里面是时区、能力开关、各项上限和几条硬规则，模型第一次连上可以先读它。
+
+**自己服务器上部署时**，反代必须为 `/api/mcp` 关闭响应缓冲（SSE 不能被 gzip 攒包），否则客户端会一直挂着不返回。配置示例见 [docs/deployment.md §5.5](docs/deployment.md)。
+
+### 走 REST 时的顺序
 
 1. `GET /api/meta` —— 拿到鉴权方式、能力开关、枚举、上限和完整端点清单（含风险等级），以及一份照抄可用的 `quickstart`。
 2. 按需 `GET /api/events` 等查询现状。
@@ -225,6 +277,8 @@ morrow-calendar/
 - 没有提醒 / 通知、没有附件；账号只能由管理员创建（首个管理员由初始化引导产生）。
 - 界面只有中文一套文案，`@ilamy/calendar` 的内置翻译也只替换了 zh-CN。
 - 列表默认只按 `start` 排序分页，没有全文检索索引（`q` 走 `LIKE`）。
+- MCP 目前只提供 HTTP 传输，没有独立的 stdio 进程；本地无 HTTPS 的客户端（如某些只认 localhost 的配置）需要先反代一层 HTTPS。
+- MCP 鉴权是 Bearer 令牌，尚未实现 OAuth 2.1。**ChatGPT 的限制**：它只认公网 HTTPS 的 MCP 服务器，走标准的 OAuth 授权流程；且多个来源称个人版（Plus / Pro）的自定义连接器只给读权限，写工具不会触发，写能力要 Business / Enterprise / Edu 才有。Claude Desktop / Cursor / Claude Code 用令牌直连则读写都正常。
 
 ## TODO
 

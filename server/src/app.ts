@@ -2,9 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cors from 'cors';
+import { toNodeHandler } from '@modelcontextprotocol/node';
 import { ApiError } from './lib/errors';
 import { config, projectRoot } from './config';
 import { authenticate, requireAuth } from './middleware/auth';
+import { attachAuthInfo } from './mcp/auth';
+import { createMcpEndpoint } from './mcp';
 import authRouter from './routes/auth';
 import calendarsRouter from './routes/calendars';
 import eventsRouter from './routes/events';
@@ -33,6 +36,9 @@ const PUBLIC_PATHS = new Set([
   // 真正的闸门是服务端「零用户才放行」的判定，不是这里的鉴权。
   '/api/setup/status',
   '/api/setup/admin',
+  // MCP 端点：不放行到这里鉴权，因为它的 401 必须是 JSON-RPC 格式而不是 REST 信封，
+  // 否则 MCP 客户端读不懂。鉴权由 attachAuthInfo 自己接管，用的仍是同一套令牌体系。
+  '/api/mcp',
 ]);
 
 function isPublic(req: Request): boolean {
@@ -87,6 +93,20 @@ export function createApp() {
   app.use('/api/calendars', calendarsRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/events', eventsRouter);
+
+  /**
+   * MCP 端点（Model Context Protocol）。
+   *
+   * 给 ChatGPT / Claude Desktop / Cursor / Claude Code 这类 AI 客户端用的第二入口，
+   * 与上面的 REST 共用同一份 service 与 repository，所以两条路径的行为天然一致。
+   *
+   * `req.body` 已由全局 express.json() 解析好，传给适配器避免二次读流；
+   * attachAuthInfo 负责把身份写成 req.auth，toNodeHandler 再把它转成工具的 authInfo。
+   */
+  const mcpNodeHandler = toNodeHandler(createMcpEndpoint());
+  app.all('/api/mcp', attachAuthInfo, (req: Request, res: Response) => {
+    void mcpNodeHandler(req, res, req.body);
+  });
 
   // 生产模式下顺带托管前端构建产物（本地开发用 Vite，不依赖这条）
   const distDir = path.join(projectRoot, 'dist');

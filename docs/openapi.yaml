@@ -49,6 +49,8 @@ tags:
     description: 日历分组
   - name: events
     description: 日程读写与回收站
+  - name: mcp
+    description: Model Context Protocol 端点（给 ChatGPT / Claude / Cursor 等 AI 客户端）
 
 paths:
   /meta:
@@ -112,6 +114,121 @@ paths:
             text/markdown:
               schema:
                 type: string
+
+  # ───────────────────────── MCP（给 AI 客户端的第二入口） ─────────────────────────
+
+  /mcp:
+    post:
+      tags: [mcp]
+      operationId: mcpRequest
+      summary: MCP 端点（JSON-RPC 2.0 over HTTP）
+      description: |
+        Model Context Protocol 端点：把同一套日程能力暴露成「可被 AI 客户端自动发现的工具」。
+
+        与上面的 REST 端点**共用同一份 service 与 repository**，所以行为天然一致；
+        差别只在传输形式——REST 适合 curl 与脚本，MCP 适合支持工具发现的 AI 客户端。
+
+        **读写语义**：单个 URL、单个 POST 方法，请求体是 JSON-RPC 2.0。
+        方法由 `method` 字段决定，常用的有 `initialize`、`tools/list`、`tools/call`、`resources/list`。
+
+        **鉴权**：沿用 REST 的同一枚令牌（`Authorization: Bearer <令牌>`），不需要另开凭据。
+        未带凭据时返回 HTTP 401，响应体是 JSON-RPC 格式的错误对象，**不是** REST 的信封格式。
+
+        **响应格式**：默认 SSE（`text/event-stream`），单条 `event: message` 携带 JSON-RPC 结果。
+        反向代理务必为该路径关闭响应缓冲，否则流式响应会被卡住（见 docs/deployment.md）。
+
+        **工具清单**（`tools/list` 返回的 name）：
+
+        | 工具 | 作用 | 备注 |
+        | --- | --- | --- |
+        | `list_events` | 查询日程 | 支持 window / q / 分组过滤 |
+        | `get_event` | 读取单条 | |
+        | `find_conflicts` | 扫描时间重叠 | 返回两两冲突对与重叠分钟数 |
+        | `list_trash` | 回收站列表 | |
+        | `create_event` | 创建日程 | **默认 dry_run** |
+        | `update_event` | 局部更新 | **默认 dry_run**，支持乐观锁 |
+        | `delete_event` | 删除（默认软删） | **默认 dry_run** |
+        | `restore_event` | 从回收站恢复 | |
+        | `purge_event` | 彻底删除单条 | **默认 dry_run**，不可恢复 |
+        | `empty_trash` | 清空回收站 | **默认 dry_run**，不可恢复 |
+        | `batch_events` | 批量增改删 | 单次 ≤ 50 条 |
+        | `list_calendars` | 日历分组列表 | |
+        | `create_calendar` | 新建分组 | |
+        | `update_calendar` | 改分组 | |
+        | `delete_calendar` | 删分组 | 组内日程迁入默认分组 |
+        | `get_settings` | 读界面偏好 | |
+        | `update_settings` | 改界面偏好 | |
+
+        **最重要的一条约定**：写操作默认试运行。
+        不传 `dry_run` 参数时只会返回「将要发生什么」，**不会落库**；
+        必须显式传 `dry_run: false` 才会真正写入。
+        这样即便调用方忘了「先预览再执行」这一步，也不会盲改用户数据。
+
+        不支持 RRULE 重复日程，遇到周期性需求请逐条创建。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/McpToolsListRequest'
+                - $ref: '#/components/schemas/McpToolsCallRequest'
+            examples:
+              toolsList:
+                summary: 列出可用工具
+                value: { jsonrpc: '2.0', id: 1, method: 'tools/list' }
+              listEvents:
+                summary: 查询本周日程
+                value:
+                  jsonrpc: '2.0'
+                  id: 2
+                  method: 'tools/call'
+                  params: { name: 'list_events', arguments: { window: 'this_week' } }
+              dryRunCreate:
+                summary: 试运行创建（默认行为，不落库）
+                value:
+                  jsonrpc: '2.0'
+                  id: 3
+                  method: 'tools/call'
+                  params:
+                    name: 'create_event'
+                    arguments:
+                      title: 导师例会
+                      start: '2026-10-20T14:00:00+08:00'
+                      end: '2026-10-20T15:30:00+08:00'
+              realCreate:
+                summary: 真正创建（必须显式关掉 dry_run）
+                value:
+                  jsonrpc: '2.0'
+                  id: 4
+                  method: 'tools/call'
+                  params:
+                    name: 'create_event'
+                    arguments:
+                      title: 导师例会
+                      start: '2026-10-20T14:00:00+08:00'
+                      end: '2026-10-20T15:30:00+08:00'
+                      dryRun: false
+      responses:
+        '200':
+          description: 'JSON-RPC 响应，以 SSE 形式返回（event: message + data: <json>）'
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: 未带有效令牌（JSON-RPC 格式错误对象，不是 REST 信封）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jsonrpc: { type: string, example: '2.0' }
+                  error:
+                    type: object
+                    properties:
+                      code: { type: integer, example: -32000 }
+                      message: { type: string }
 
   # ───────────────────────── 初始化引导 ─────────────────────────
 
@@ -1143,6 +1260,35 @@ components:
           schema: { $ref: '#/components/schemas/FailureEnvelope' }
 
   schemas:
+    McpToolsListRequest:
+      type: object
+      required: [jsonrpc, method]
+      description: 请求工具清单。服务器会返回工具名、描述与每个工具的入参 JSON Schema。
+      properties:
+        jsonrpc: { type: string, const: '2.0' }
+        id: { type: [integer, string] }
+        method: { type: string, const: 'tools/list' }
+
+    McpToolsCallRequest:
+      type: object
+      required: [jsonrpc, method, params]
+      description: |
+        调用某个工具。`arguments` 的具体字段由该工具的 inputSchema 决定，
+        见 `tools/list` 的返回。写类工具默认 `dryRun: true`（只预览不落库）。
+      properties:
+        jsonrpc: { type: string, const: '2.0' }
+        id: { type: [integer, string] }
+        method: { type: string, const: 'tools/call' }
+        params:
+          type: object
+          required: [name]
+          properties:
+            name: { type: string, description: '工具名，如 list_events / create_event' }
+            arguments:
+              type: object
+              additionalProperties: true
+              description: '工具入参；写操作时记得最终传 dryRun: false 才会真的写入'
+
     SuccessEnvelope:
       type: object
       required: [ok, data]

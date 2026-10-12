@@ -135,13 +135,23 @@ h4 {
   line-height: 1.35;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  line-height: 1.4;
-  color: inherit;
+/*
+ * 表单控件的默认继承。
+ *
+ * 必须放进 @layer base：无层级的样式优先级高于所有 @layer（Tailwind 的
+ * 工具类都在 @layer utilities 里），一旦写成无层级规则，这里的 `color: inherit`
+ * 就会盖掉 `text-primary-foreground` 之类的工具类 —— 表现为「白日」主题下
+ * 蓝底按钮上的字变回黑色。放进 base 后，工具类仍可正常覆盖。
+ */
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    line-height: 1.4;
+    color: inherit;
+  }
 }
 
 /* 键盘可达性：统一焦点环，鼠标点击不出现 */

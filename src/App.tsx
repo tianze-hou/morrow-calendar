@@ -3,7 +3,13 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import { IlamyCalendar } from '@ilamy/calendar';
 import { agendaPlugin } from '@ilamy/calendar/plugins/agenda';
-import type { CalendarEvent, CellInfo, EventFormProps, IlamyCalendarProps } from '@ilamy/calendar';
+import type {
+  CalendarEvent,
+  CellInfo,
+  EventFormProps,
+  IlamyCalendarProps,
+  RenderCurrentTimeIndicatorProps,
+} from '@ilamy/calendar';
 import {
   DEFAULT_SETTINGS,
   type AppSettings,
@@ -18,6 +24,7 @@ import { CalendarSidebar } from './components/CalendarSidebar';
 import { COLOR_HEX } from './components/colors';
 import { EventDialog, type DialogDraft } from './components/EventDialog';
 import { LoginScreen } from './components/LoginScreen';
+import { AgendaNowLine, GridNowLine } from './components/NowIndicator';
 import { SetupScreen } from './components/SetupScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { TrashPanel } from './components/TrashPanel';
@@ -298,6 +305,39 @@ export default function App() {
   );
 
   const calendarEvents = useMemo(() => shownEvents.map(toCalendarEvent), [shownEvents]);
+
+  /**
+   * 日程列表视图里，指示线要落在「已经开始的那一行」下方，因此需要按列表顺序
+   * 拿到当天的日程。筛选与排序都对齐 agenda 插件的口径：开始时间落在今天（全天
+   * 日程则与今天有重叠）的算今天这一组，组内全天在前、其余按开始时间升序。
+   */
+  const todayEvents = useMemo(() => {
+    const dayStart = dayjs().startOf('day');
+    const dayEnd = dayjs().endOf('day');
+    return shownEvents
+      .filter((ev) => {
+        const start = dayjs(ev.start);
+        if (ev.allDay) return !dayjs(ev.end).isBefore(dayStart) && !start.isAfter(dayEnd);
+        return !start.isBefore(dayStart) && !start.isAfter(dayEnd);
+      })
+      .sort((a, b) => {
+        const fa = a.allDay ? 0 : 1;
+        const fb = b.allDay ? 0 : 1;
+        if (fa !== fb) return fa - fb;
+        return dayjs(a.start).valueOf() - dayjs(b.start).valueOf();
+      });
+  }, [shownEvents]);
+
+  /** 接管那条红线：日/周按时间比例、日程列表按真实行位置，且都由自己的定时器驱动。 */
+  const renderCurrentTimeIndicator = useCallback(
+    (props: RenderCurrentTimeIndicatorProps) =>
+      props.view === 'agenda' ? (
+        <AgendaNowLine events={todayEvents} />
+      ) : (
+        <GridNowLine rangeStart={props.rangeStart} rangeEnd={props.rangeEnd} axis={props.axis} />
+      ),
+    [todayEvents],
+  );
 
   const collectWarnings = (result: { warnings?: Array<{ code: string; message: string }> }) =>
     (result.warnings ?? [])
@@ -676,6 +716,7 @@ export default function App() {
             onEventUpdate={handleDragUpdate}
             onDateChange={handleDateChange}
             renderEventForm={renderEventForm}
+            renderCurrentTimeIndicator={renderCurrentTimeIndicator}
           />
         </main>
       </div>

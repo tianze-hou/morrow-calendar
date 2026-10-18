@@ -136,7 +136,7 @@ if [ "$DO_STATUS" -eq 1 ]; then
   [ -f "$DB_PATH" ] && echo "  库文件大小 $(du -h "$DB_PATH" | cut -f1)"
   echo "  回滚点     $([ -f "$PREV_DIR/deploy/deploy.sh" ] && echo "$PREV_DIR" || echo 无)"
   echo "  最近备份   $(ls -t "$BACKUP_DIR" 2>/dev/null | head -1 || true)"
-  echo "  构建目录   $([ -d "$WORK_DIR/node_modules" ] && echo "$WORK_DIR（依赖已就位）" || echo "$WORK_DIR（待首次安装）")"
+  echo "  构建目录   $([ -f "$WORK_DIR/node_modules/.morrow-deps" ] && echo "$WORK_DIR（依赖已就位）" || echo "$WORK_DIR（下次会重新装依赖）")"
   echo
   exit 0
 fi
@@ -250,10 +250,13 @@ rsync -a --delete --exclude 'node_modules' --exclude 'dist' --exclude 'dist-serv
 
 LOCK_SHA="$(sha256sum "$TMP/src/package-lock.json" | cut -d' ' -f1)"
 NODE_V="$(node -v)"
+DEPS_MARK="$WORK_DIR/node_modules/.morrow-deps"
 DEPS_REUSED=0
-if [ "$DO_CACHE" -eq 1 ] && [ -d "$WORK_DIR/node_modules" ] \
-   && [ "$(cat "$WORK_DIR/node_modules.lock" 2>/dev/null || true)" = "$LOCK_SHA" ] \
-   && [ "$(cat "$WORK_DIR/node_modules.node" 2>/dev/null || true)" = "$NODE_V" ]; then
+# 标记文件故意放在 node_modules 里面：npm ci 会清空这个目录，标记随之消失，
+# 不会出现「装了一半却仍被判定为可复用」的情况。
+# （也别放在工作目录顶层——上面那句 rsync --delete 会把它当多余文件删掉。）
+if [ "$DO_CACHE" -eq 1 ] && [ -f "$DEPS_MARK" ] \
+   && [ "$(cat "$DEPS_MARK")" = "$(printf '%s\n%s' "$LOCK_SHA" "$NODE_V")" ]; then
   log "依赖未变（package-lock 与 Node 版本一致），跳过 npm ci 与依赖同步"
   export SKIP_INSTALL=1
   export SYNC_DEPS=0
@@ -313,10 +316,9 @@ else
   die "已回滚到上一版本，服务应已恢复。失败原因请看上面的输出"
 fi
 
-# 这一轮真的装过依赖，才把「可现在复用」的标记写进工作目录
-if [ "$DEPS_REUSED" -eq 0 ]; then
-  printf '%s\n' "$LOCK_SHA" > "$WORK_DIR/node_modules.lock"
-  printf '%s\n' "$NODE_V" > "$WORK_DIR/node_modules.node"
+# 这一轮真的装过依赖，才写下「可现在复用」的标记
+if [ "$DEPS_REUSED" -eq 0 ] && [ -d "$WORK_DIR/node_modules" ]; then
+  printf '%s\n%s\n' "$LOCK_SHA" "$NODE_V" > "$DEPS_MARK"
 fi
 
 # ── 13. 收尾：源码同步到安装目录、写版本、修属主 ───────────────

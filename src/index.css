@@ -15,60 +15,101 @@
  * 圆角刻意保持小而统一，维持包豪斯的几何感，不做圆润化。
  */
 
-/* ── 白日：暖白纸感 + 近黑 + 克制的墨蓝 ─────────────── */
+/*
+ * ── 白日：米黄纸 + 陶土橘 ──────────────────────────────
+ *
+ * 底色不用纯白：纸的暖米色（#f7f1e5）在室内光下比白屏柔和，也不容易照出
+ * 屏幕上那层灰。正文是深暖褐（#2b2420）而非纯黑——纯黑与浅底的对比度会
+ * 到 16:1 以上，长读会有轻微的「字在跳」的感觉，压到 13.5:1 反而更稳。
+ *
+ * 强调色是陶土橘（#ad5c30），和图标同源。这一档是算着定的：
+ * 更浅的 #b4653a 配白字只有 4.13:1，按钮上的字会发虚；#ad5c30 到 4.61:1，
+ * 刚好过 AA，又不至于暗到发黑。
+ */
 :root,
 [data-theme='day'] {
-  --background: #f5f3ee;
-  --foreground: #191919;
-  --card: #fffefb;
-  --card-foreground: #191919;
-  --popover: #fffefb;
-  --popover-foreground: #191919;
-  --primary: #1f4e79;
-  --primary-foreground: #f8f7f3;
-  --secondary: #e8e5dd;
-  --secondary-foreground: #191919;
-  --muted: #ece9e2;
-  --muted-foreground: #67645e;
-  --accent: #e6e3da;
-  --accent-foreground: #191919;
-  --destructive: #a8321f;
-  --destructive-foreground: #fdf7f5;
-  --border: #d9d5cb;
-  --input: #d9d5cb;
-  --ring: #1f4e79;
-  --sidebar: #efece5;
-  --sidebar-foreground: #191919;
-  --overlay: rgba(25, 25, 25, 0.42);
+  --background: #f7f1e5;
+  --foreground: #2b2420;
+  --card: #fdf9f0;
+  --card-foreground: #2b2420;
+  --popover: #fdf9f0;
+  --popover-foreground: #2b2420;
+  --primary: #ad5c30;
+  --primary-foreground: #fff9f1;
+  --secondary: #ece2d2;
+  --secondary-foreground: #2b2420;
+  --muted: #f1e8da;
+  --muted-foreground: #6f6357;
+  --accent: #f0e4d2;
+  --accent-foreground: #2b2420;
+  --destructive: #a8432c;
+  --destructive-foreground: #fdf7f2;
+  --border: #ded0b9;
+  --input: #ded0b9;
+  --ring: #ad5c30;
+  --sidebar: #f2ebdd;
+  --sidebar-foreground: #2b2420;
+  --overlay: rgba(74, 52, 36, 0.32);
   --radius: 0.25rem;
 }
 
-/* ── 黑夜：低饱和深灰蓝 + 浅灰字 + 微蓝强调 ─────────── */
+/*
+ * ── 黑夜：灯下暖光 ────────────────────────────────────
+ *
+ * 这套是按「晚上关灯后看纸」的直觉做的，不是把白日配色反过来：
+ *
+ * 1. 底色是深暖褐（#1a1614），不是纯黑也不是冷灰。纯黑在 OLED 上与米白字的
+ *    交界太硬，明暗切换时瞳孔要重新适应；深褐把亮度抬了一点点，边缘就软了。
+ * 2. 正文是米白（#e6ddcf），不是纯白。纯白小字在暗环境里会「晕」（halation），
+ *    尤其散光眼；褪掉那层亮，字反而更清楚。对比 13.3:1，比白日略低，够读。
+ * 3. 强调色是琥珀（#d09258）而不是白天那个陶土橘。同一个橘在暗底上会显得
+ *    又亮又闷；提亮 + 降饱和之后，它更像灯照在纸上的颜色，不抢眼睛。
+ * 4. 次要文字用暖灰（#a2958a），不带蓝。冷灰在暖底上会显出脏。
+ *
+ * 四层叠起来，夜里看是「暖光下的纸」，而不是「蓝色屏幕调暗了」。
+ */
 [data-theme='night'],
 .dark {
-  --background: #1a1d21;
-  --foreground: #e3e5e9;
-  --card: #212529;
-  --card-foreground: #e3e5e9;
-  --popover: #212529;
-  --popover-foreground: #e3e5e9;
-  --primary: #7ba0c8;
-  --primary-foreground: #14171a;
-  --secondary: #2a2f36;
-  --secondary-foreground: #e3e5e9;
-  --muted: #262b31;
-  --muted-foreground: #9aa1ac;
-  --accent: #2e343b;
-  --accent-foreground: #e3e5e9;
-  --destructive: #c26b5f;
-  --destructive-foreground: #17191c;
-  --border: #333941;
-  --input: #333941;
-  --ring: #7ba0c8;
-  --sidebar: #1e2227;
-  --sidebar-foreground: #e3e5e9;
-  --overlay: rgba(6, 8, 10, 0.62);
+  --background: #1a1614;
+  --foreground: #e6ddcf;
+  --card: #221d1a;
+  --card-foreground: #e6ddcf;
+  --popover: #282119;
+  --popover-foreground: #e6ddcf;
+  --primary: #d09258;
+  --primary-foreground: #1a1512;
+  --secondary: #2b2521;
+  --secondary-foreground: #e6ddcf;
+  --muted: #251f1c;
+  --muted-foreground: #a2958a;
+  --accent: #2f2823;
+  --accent-foreground: #e6ddcf;
+  --destructive: #c4735f;
+  --destructive-foreground: #17120f;
+  --border: #362e28;
+  --input: #362e28;
+  --ring: #d09258;
+  --sidebar: #1e1a17;
+  --sidebar-foreground: #e6ddcf;
+  --overlay: rgba(10, 8, 7, 0.72);
   --radius: 0.25rem;
+}
+
+/*
+ * 夜间的一层暖光。
+ *
+ * 只在夜间加，因为只有夜里存在「台灯从某个方向照过来」这个物理参照。
+ * 用 body 的多层背景而不是伪元素盖在内容上：伪元素要么被卡片挡住，要么
+ * 得靠 z-index 压到内容上面，滚动时的重绘很不划算。
+ * alpha 压到 0.05 以下——它的作用是让大面积的深褐不至于死板，不是让你看见光斑。
+ */
+[data-theme='night'] body,
+.dark body {
+  background-image:
+    radial-gradient(120% 80% at 76% -12%, rgba(206, 132, 85, 0.055), transparent 60%),
+    radial-gradient(90% 60% at -8% 106%, rgba(180, 101, 58, 0.03), transparent 55%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
 }
 
 @theme inline {
@@ -211,6 +252,45 @@ h4 {
 [data-testid='calendar-body'] [data-drop-target='true'] {
   outline: 2px dashed var(--ring);
   outline-offset: -2px;
+}
+
+/*
+ * 组件库里剩下的几处冷色。
+ *
+ * 「今天」那一列写死了 bg-blue-50 + text-blue-600，是整个暖色界面里唯一一块
+ * 蓝色（它铺满整列，很显眼）。这里不改成写死的橘，而是用主色混进卡片底：
+ * 换主题时它跟着主色走，白日是淡陶土，夜里是淡琥珀。
+ *
+ * bg-blue-500 / text-blue-500 / bg-blue-100 目前没出现在渲染结果里，但月视图、
+ * 日程列表、多日历事件着色这几个分支会用到它们，一并覆盖，免得换个视图又冒出冷色。
+ */
+[data-theme] .bg-blue-50 {
+  background-color: color-mix(in srgb, var(--primary) 9%, var(--card));
+}
+[data-theme] .bg-blue-100 {
+  background-color: color-mix(in srgb, var(--primary) 15%, var(--card));
+}
+[data-theme] .bg-blue-500 {
+  background-color: var(--primary);
+}
+[data-theme] .text-blue-500,
+[data-theme] .text-blue-600 {
+  color: var(--primary);
+}
+
+/*
+ * 非本月的格子（月视图里 9 月的 28–30、11 月的 1–8 号）。
+ *
+ * 组件用 `bg-[color-mix(in_oklch,var(--background),var(--foreground)_3%)]` 生成，
+ * 而 oklch 在这条链路上会把色相算成 none：实测计算值是
+ * oklch(0.939 0.017 none)。无彩灰夹在米色里，视觉上会被衬成淡紫——在原先的
+ * 灰蓝主题里看不出来，换成暖色之后就很扎眼。
+ *
+ * 这里按 class 子串匹配覆盖掉它（`in_oklch` 是这条链路的独有标记），
+ * 改成 srgb 混合，色相是确定的暖色。3% 的比例与组件原意一致，只是不再丢色相。
+ */
+[data-theme] [class*='in_oklch'] {
+  background-color: color-mix(in srgb, var(--foreground) 3%, var(--background));
 }
 
 /* ───────────────────────── 手机端 ─────────────────────────

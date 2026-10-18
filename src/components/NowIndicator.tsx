@@ -1,5 +1,5 @@
 /**
- * 当前时刻指示线（那条红线）。
+ * 当前时刻指示线（那条横线）。
  *
  * 为什么要自己接管，而不是用组件库自带的：
  *
@@ -65,7 +65,9 @@ function useNowTick(intervalMs = TICK_MS): number {
 }
 
 /**
- * 与组件库默认红线完全相同的类名与结构 —— 只换「谁来驱动位置」，不改视觉。
+ * 与组件库默认线条相同的类名与结构 —— 只换「谁来驱动位置」，不改视觉。
+ * 颜色走 --primary：原先是写死的 bg-red-500，在暖色界面里像一条报错提示；
+ * 换成主色后，「此刻」和「今天」的高亮同源，日夜两套主题都对得上。
  * 定位属性（top / left）由调用方通过 style 传入。
  */
 function Line({
@@ -85,8 +87,8 @@ function Line({
         data-testid="current-time-indicator"
         style={style}
       >
-        <div className="size-2 shrink-0 rounded-full bg-red-500" data-testid="current-time-dot" />
-        <div className="w-0.5 flex-1 bg-red-500" />
+        <div className="size-2 shrink-0 rounded-full bg-primary" data-testid="current-time-dot" />
+        <div className="w-0.5 flex-1 bg-primary" />
       </div>
     );
   }
@@ -97,8 +99,8 @@ function Line({
       data-testid="current-time-indicator"
       style={style}
     >
-      <div className="size-2 shrink-0 rounded-full bg-red-500" data-testid="current-time-dot" />
-      <div className="h-0.5 flex-1 bg-red-500" />
+      <div className="size-2 shrink-0 rounded-full bg-primary" data-testid="current-time-dot" />
+      <div className="h-0.5 flex-1 bg-primary" />
     </div>
   );
 }

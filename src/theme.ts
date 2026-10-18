@@ -20,15 +20,15 @@ export interface Palette {
 export const PALETTES: Record<ThemeKey, Palette> = {
   day: {
     label: '白日',
-    note: '暖白纸感底 + 近黑字 + 克制的墨蓝，白天室内光线下最清晰',
+    note: '米黄纸底 + 陶土橘 + 深褐字，像在纸上写字，室内光下最稳',
     dark: false,
-    swatch: ['#f5f3ee', '#1f4e79', '#191919'],
+    swatch: ['#f7f1e5', '#ad5c30', '#2b2420'],
   },
   night: {
     label: '黑夜',
-    note: '低饱和深灰蓝 + 浅灰字，夜间长时间看不刺眼',
+    note: '深褐底 + 琥珀强调 + 米白字，关灯后像暖光下的纸，不刺眼',
     dark: true,
-    swatch: ['#1a1d21', '#7ba0c8', '#e3e5e9'],
+    swatch: ['#1a1614', '#d09258', '#e6ddcf'],
   },
 };
 

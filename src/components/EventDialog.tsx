@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
 import { EVENT_COLORS, type CalendarGroup, type EventColor } from '../../shared/types';
+import { comboKeys } from '../lib/hotkeys';
 import { COLOR_HEX, COLOR_LABEL } from './colors';
 import { Btn, Field, INPUT_CLS, Modal, Notice } from './ui';
 
@@ -43,6 +44,25 @@ export function EventDialog({
 
   useEffect(() => setForm(draft), [draft]);
 
+  /**
+   * `Ctrl/⌘+Enter` 与 `Ctrl/⌘+S` 都保存。
+   *
+   * 后者必须 preventDefault：浏览器的默认动作是「保存网页」，抢不过它就等于
+   * 每次按都弹一次文件对话框。放在 window 上而不是面板上，是因为焦点通常在
+   * 输入框里，事件不会冒泡到面板。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || saving) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'enter' && key !== 's') return;
+      e.preventDefault();
+      void submit();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [form, saving]);
+
   const set = <K extends keyof DialogDraft>(key: K, value: DialogDraft[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
@@ -83,7 +103,10 @@ export function EventDialog({
           ) : (
             <span />
           )}
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3">
+            <span className="hidden text-2xs text-muted-foreground sm:inline">
+              {comboKeys('mod+enter').join(' + ')} 保存
+            </span>
             <Btn variant="ghost" size="sm" onClick={onCancel}>
               取消
             </Btn>

@@ -7,6 +7,7 @@ import type {
   CalendarEvent,
   CellInfo,
   EventFormProps,
+  IlamyCalendarApi,
   IlamyCalendarProps,
   RenderCurrentTimeIndicatorProps,
 } from '@ilamy/calendar';
@@ -18,8 +19,10 @@ import {
   type ScheduleEvent,
   type UpdateEventInput,
   type User,
+  type ViewKey,
 } from '../shared/types';
 import { api, ApiError, auth as authApi, calendars as calendarsApi, downloadIcs, events as eventsApi, settings as settingsApi, setup as setupApi } from './api/client';
+import { CalendarApiBridge } from './components/CalendarApiBridge';
 import { CalendarSidebar } from './components/CalendarSidebar';
 import { COLOR_HEX } from './components/colors';
 import { EventDialog, type DialogDraft } from './components/EventDialog';
@@ -27,10 +30,12 @@ import { LoginScreen } from './components/LoginScreen';
 import { AgendaNowLine, GridNowLine } from './components/NowIndicator';
 import { SetupScreen } from './components/SetupScreen';
 import { SettingsPanel } from './components/SettingsPanel';
+import { ShortcutSheet } from './components/ShortcutSheet';
 import { TrashPanel } from './components/TrashPanel';
 import { Btn, Icon } from './components/ui';
 import { applyTheme, clearLocalSettings, readLocalSettings, writeLocalSettings } from './theme';
 import { saveBlob } from './lib/download';
+import { useHotkeys, type HotkeySpec } from './lib/hotkeys';
 import { zhCN } from './i18n/zh-CN';
 
 dayjs.locale('zh-cn');
@@ -59,6 +64,19 @@ function useIsMobile(): boolean {
 
 /** 插件数组放到模块级常量：避免每次渲染重建导致日历内部 memo 全部失效。 */
 const plugins = [agendaPlugin({ window: 'week' })];
+
+/**
+ * 每个视图对应哪个字母键。
+ *
+ * 用 `Record<ViewKey, …>` 而不是数组：以后新增视图忘了配键位，TypeScript 会
+ * 直接报错，不会出现「有视图但切换不到」这种哑巴问题。
+ */
+const VIEW_KEYS: Record<ViewKey, { combo: string; label: string }> = {
+  day: { combo: 'd', label: '切到日视图' },
+  week: { combo: 'w', label: '切到周视图' },
+  month: { combo: 'm', label: '切到月视图' },
+  agenda: { combo: 'a', label: '切到日程列表' },
+};
 
 /** 领域模型 → 日历组件模型 */
 function toCalendarEvent(ev: ScheduleEvent): CalendarEvent {
@@ -144,10 +162,21 @@ export default function App() {
   const [draft, setDraft] = useState<DialogDraft | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [trashCount, setTrashCount] = useState(0);
-  const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [toast, setToast] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+    /** 可撤销的操作多挂一个按钮，比弹一个「删除成功」有用 */
+    action?: { label: string; run: () => void };
+  } | null>(null);
+
+  /** 最近一次软删除，`Ctrl/⌘+Z` 与提示条上的「撤销」都指向它 */
+  const lastDeletedRef = useRef<{ id: string; title: string } | null>(null);
+  /** 日历内部 API（切视图 / 回今天）。组件树里的拿法见 CalendarApiBridge。 */
+  const calendarApiRef = useRef<IlamyCalendarApi | null>(null);
 
   /** null = 组件尚未回报可见范围，先全量拉取；一旦回报过就改为按范围拉取。 */
   const [visibleRange, setVisibleRange] = useState<{ from: string; to: string } | null>(null);
@@ -155,7 +184,11 @@ export default function App() {
   /** 请求序号：避免快速翻页时旧响应覆盖新响应 */
   const requestSeq = useRef(0);
 
-  const notify = useCallback((kind: 'ok' | 'err', text: string) => setToast({ kind, text }), []);
+  const notify = useCallback(
+    (kind: 'ok' | 'err', text: string, action?: { label: string; run: () => void }) =>
+      setToast({ kind, text, action }),
+    [],
+  );
 
   /* --------------------------------------------------------- 鉴权 */
 
@@ -286,7 +319,8 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3200);
+    // 带撤销按钮的提示多留一会：来不及点就等于没有
+    const timer = setTimeout(() => setToast(null), toast.action ? 6000 : 3200);
     return () => clearTimeout(timer);
   }, [toast]);
 
@@ -426,6 +460,20 @@ export default function App() {
     [reload, notify],
   );
 
+  /** 撤销删除。与回收站里的「恢复」是同一件事，只是入口不同。 */
+  const restoreDeleted = useCallback(
+    async (item: { id: string; title: string }) => {
+      try {
+        await api.restore(item.id);
+        reload();
+        notify('ok', `已恢复「${item.title}」`);
+      } catch (e) {
+        notify('err', e instanceof ApiError ? e.message : '恢复失败（可能已被彻底删除）');
+      }
+    },
+    [reload, notify],
+  );
+
   const handleDelete = useCallback(
     async (id: string) => {
       const target = events.find((e) => e.id === id);
@@ -433,14 +481,19 @@ export default function App() {
       if (!window.confirm(`确认删除「${target.title}」？\n它会先移到回收站，可以随时恢复。`)) return;
       try {
         await api.remove(id, 'soft');
+        const deleted = { id, title: target.title };
+        lastDeletedRef.current = deleted;
         setDraft(null);
         reload();
-        notify('ok', '已移入回收站');
+        notify('ok', `已移入回收站：${target.title}`, {
+          label: '撤销',
+          run: () => void restoreDeleted(deleted),
+        });
       } catch (e) {
         notify('err', e instanceof ApiError ? e.message : '删除失败');
       }
     },
-    [events, reload, notify],
+    [events, reload, notify, restoreDeleted],
   );
 
   /** 拖拽或拉伸日程后由日历回调，把新时间写回后端 */
@@ -539,6 +592,46 @@ export default function App() {
     });
   }, [defaultCalendarId]);
 
+  /* ---------------------------------------------------------- 快捷键 */
+
+  const handleCalendarApi = useCallback((next: IlamyCalendarApi) => {
+    calendarApiRef.current = next;
+  }, []);
+
+  /**
+   * 撤销最近一次删除。
+   * 没有记录时什么都不做 —— 弹一句「当前没有可撤销的操作」只是噪音。
+   */
+  const undoLastDelete = useCallback(() => {
+    const item = lastDeletedRef.current;
+    if (!item) return;
+    lastDeletedRef.current = null;
+    void restoreDeleted(item);
+  }, [restoreDeleted]);
+
+  const hotkeys = useMemo<HotkeySpec[]>(() => {
+    const viewKeys = (Object.keys(VIEW_KEYS) as ViewKey[]).map<HotkeySpec>((view) => ({
+      combo: VIEW_KEYS[view].combo,
+      label: VIEW_KEYS[view].label,
+      group: '视图与导航',
+      run: () => calendarApiRef.current?.setView(view),
+    }));
+
+    return [
+      { combo: 't', label: '回到今天', group: '视图与导航', run: () => calendarApiRef.current?.today() },
+      ...viewKeys,
+      { combo: 'n', label: '新建日程', group: '日程', run: openCreateDefault },
+      { combo: 'mod+z', label: '撤销上一次删除', group: '日程', run: undoLastDelete },
+      { combo: '?', label: '打开 / 收起这份快捷键表', group: '通用', run: () => setShowShortcuts((v) => !v) },
+      { combo: 'esc', label: '收起手机侧栏', group: '通用', run: () => setMobileNavOpen(false) },
+    ];
+  }, [openCreateDefault, undoLastDelete]);
+
+  // 弹窗打开时整体让位：Esc、字母键都该归弹窗，不该被全局绑定抢走
+  const shortcutsActive = authState === 'authed' && !draft && !showSettings && !showTrash;
+  // 速查表开着时只留「再按一次 ? 收起」，否则在帮助页上乱按会悄悄改掉后面的视图
+  useHotkeys(showShortcuts ? hotkeys.filter((h) => h.combo === '?') : hotkeys, shortcutsActive);
+
   /** 由 IlEventFormBridge 交回来的关闭函数，用来同步关掉组件内部那张表单 */
   const ilFormCloseRef = useRef<() => void>(() => ({}));
   const ilFormOpenedRef = useRef(false);
@@ -576,16 +669,19 @@ export default function App() {
 
   const renderEventForm = useCallback(
     (props: EventFormProps) => (
-      <IlEventFormBridge
-        open={Boolean(props.open)}
-        selectedEvent={props.selectedEvent ?? null}
-        onClose={props.onClose}
-        registerClose={registerIlFormClose}
-        onOpened={markIlFormOpened}
-        onOpen={openFromBuiltInForm}
-      />
+      <>
+        <CalendarApiBridge onReady={handleCalendarApi} />
+        <IlEventFormBridge
+          open={Boolean(props.open)}
+          selectedEvent={props.selectedEvent ?? null}
+          onClose={props.onClose}
+          registerClose={registerIlFormClose}
+          onOpened={markIlFormOpened}
+          onOpen={openFromBuiltInForm}
+        />
+      </>
     ),
-    [registerIlFormClose, markIlFormOpened, openFromBuiltInForm],
+    [handleCalendarApi, registerIlFormClose, markIlFormOpened, openFromBuiltInForm],
   );
 
   const handleDateChange = useCallback((_date: unknown, range: VisibleRange) => {    setVisibleRange({
@@ -752,6 +848,15 @@ export default function App() {
             <Icon name="settings" size={14} />
             <span className="hidden sm:inline">设置</span>
           </Btn>
+          <Btn
+            variant="ghost"
+            size="sm"
+            className="hidden md:inline-flex"
+            onClick={() => setShowShortcuts(true)}
+            title="键盘快捷键（按 ? 也能打开）"
+          >
+            <Icon name="keyboard" size={14} />
+          </Btn>
           {user && (
             <span
               className="ml-1 hidden items-center gap-1.5 rounded-[var(--radius-md)] border border-border px-2.5 py-1 text-xs text-muted-foreground md:flex"
@@ -886,14 +991,28 @@ export default function App() {
         }}
       />
 
+      <ShortcutSheet open={showShortcuts} onClose={() => setShowShortcuts(false)} specs={hotkeys} />
+
       {toast && (
         <div
-          className={`fixed bottom-5 left-1/2 z-[60] -translate-x-1/2 rounded-[var(--radius-md)] px-4 py-2 text-xs shadow-lg ${
+          className={`fixed bottom-5 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-[var(--radius-md)] px-4 py-2 text-xs shadow-lg ${
             toast.kind === 'ok' ? 'bg-accent text-foreground' : 'bg-destructive text-destructive-foreground'
           }`}
           role="status"
         >
-          {toast.text}
+          <span className="max-w-[60vw] truncate sm:max-w-xs">{toast.text}</span>
+          {toast.action && (
+            <button
+              type="button"
+              onClick={() => {
+                toast.action?.run();
+                setToast(null);
+              }}
+              className="shrink-0 underline decoration-dotted underline-offset-4 hover:opacity-80"
+            >
+              {toast.action.label}
+            </button>
+          )}
         </div>
       )}
     </div>

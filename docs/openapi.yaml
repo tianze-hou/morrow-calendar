@@ -49,6 +49,8 @@ tags:
     description: 日历分组
   - name: events
     description: 日程读写与回收站
+  - name: export
+    description: 数据导出（iCalendar）
   - name: mcp
     description: Model Context Protocol 端点（给 ChatGPT / Claude / Cursor 等 AI 客户端）
 
@@ -1191,6 +1193,43 @@ paths:
                     properties:
                       data: { $ref: '#/components/schemas/WriteResult' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /export/events.ics:
+    get:
+      tags: [export]
+      operationId: exportIcs
+      summary: 导出为 iCalendar（.ics）
+      description: |
+        RFC 5545 文本，可直接导入 Apple / Google / 系统日历。
+
+        定时日程一律写成 UTC（`DTSTART:20261110T050000Z`），不带 TZID —— 客户端认不出
+        时区名就整条落错位置，UTC 是绝对时刻，没有这个前提。全天日程写成
+        `VALUE=DATE`，DTEND 按规范取开区间，已自动加一天。
+
+        行按 75 个八位组折行（按码点切，不会劈开汉字），换行统一 CRLF。
+      parameters:
+        - { name: from, in: query, schema: { type: string }, description: 起始时刻（含），RFC 3339 }
+        - { name: to, in: query, schema: { type: string }, description: 结束时刻（含），RFC 3339 }
+        - name: window
+          in: query
+          description: 相对时间窗口，与 from/to 二选一
+          schema: { type: string, enum: [today, tomorrow, yesterday, this_week, next_week, this_month, next_7_days, next_30_days] }
+        - { name: calendar_id, in: query, schema: { type: string }, description: 只导某个分组；日历名与文件名会用分组名 }
+        - { name: ids, in: query, schema: { type: string }, description: 逗号分隔的日程 id；传了就只导这几条，忽略区间 }
+      responses:
+        '200':
+          description: iCalendar 文本
+          headers:
+            Content-Disposition:
+              description: 'attachment，同时带 filename= 兜底与 RFC 5987 的 filename*（中文分组名不会变乱码）'
+              schema: { type: string }
+            X-Event-Count:
+              description: 文件里的日程条数，不用解析文件就能核对
+              schema: { type: string }
+          content:
+            text/calendar:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
 components:
   securitySchemes:

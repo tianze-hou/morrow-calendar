@@ -64,6 +64,7 @@ export const ENDPOINT_CATALOG: ApiMeta['endpoints'] = [
   { method: 'DELETE', path: '/api/events/:id', summary: '删除日程（默认进回收站，?mode=hard 彻底删除）', sideEffect: 'write', riskLevel: 'confirm', auth: true },
   { method: 'DELETE', path: '/api/events/:id/purge', summary: '从回收站彻底删除单条', sideEffect: 'write', riskLevel: 'danger', auth: true },
   { method: 'POST', path: '/api/events/batch', summary: '批量增改删（上限 50，支持 dry_run / atomic）', sideEffect: 'write', riskLevel: 'danger', auth: true },
+  { method: 'GET', path: '/api/export/events.ics', summary: '导出 iCalendar（RFC 5545），可按区间 / 分组 / 指定 id', sideEffect: 'read', riskLevel: 'safe', auth: true },
 ];
 
 /**

@@ -216,5 +216,51 @@ export const settings = {
   reset: () => request<AppSettings>('/settings/reset', { method: 'POST' }),
 };
 
+/* ───────────────────────────── 导出 ───────────────────────────── */
+
+export interface IcsParams {
+  from?: string;
+  to?: string;
+  calendarId?: string;
+  /** 指定日程 id；不传则按区间 / 分组导出 */
+  ids?: string[];
+}
+
+/**
+ * 取回 .ics 文件内容。
+ *
+ * 走 fetch 拿 Blob，而不是把 window.location 指过去：令牌过期时要能拿到 401
+ * 并回登录页。直接跳转的话，浏览器会把那段 JSON 错误当成文件存下来。
+ */
+export async function downloadIcs(params: IcsParams = {}): Promise<{ blob: Blob; filename: string }> {
+  const qs = new URLSearchParams();
+  if (params.from) qs.set('from', params.from);
+  if (params.to) qs.set('to', params.to);
+  if (params.calendarId) qs.set('calendar_id', params.calendarId);
+  if (params.ids?.length) qs.set('ids', params.ids.join(','));
+
+  const res = await fetch(`${BASE}/export/events.ics?${qs.toString()}`, { credentials: 'include' });
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as Envelope<unknown> | null;
+    const err = json?.error ?? { code: 'INTERNAL_ERROR', message: `导出失败（HTTP ${res.status}）` };
+    throw new ApiError(err.message, err.code, res.status, err.details, err.hint);
+  }
+
+  return { blob: await res.blob(), filename: filenameFrom(res.headers.get('content-disposition')) };
+}
+
+/** 从 Content-Disposition 里取文件名，优先 RFC 5987 那份（能带中文）。 */
+function filenameFrom(disposition: string | null): string {
+  const encoded = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      /* 编码坏了就落到下面的 ASCII 兜底 */
+    }
+  }
+  return disposition?.match(/filename="([^"]+)"/)?.[1] ?? 'calendar.ics';
+}
+
 /** 事件接口的短别名，历史调用点沿用 api.xxx 的写法。 */
 export const api = events;

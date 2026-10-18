@@ -53,6 +53,7 @@
 | 视图 | 日、周、月、日程列表（Agenda），周起始日与 12/24 小时制可配 |
 | 日历分组 | 多分组、整组显隐、改名换色、排序；删分组时组内日程自动迁入默认分组 |
 | 回收站 | 删除默认进回收站，可逐条恢复、彻底删除或一键清空 |
+| 导出 | 一键导出 `.ics`：全部，或只导当前选中的分组。可直接导入系统日历 / 手机日历 |
 | 多用户 | 口令登录（scrypt 哈希 + HttpOnly 会话）、管理员建号 / 停用 / 重置口令 / 升降角色 |
 | API 令牌 | 每用户可签发多个长期令牌给 AI Agent 用，明文只显示一次，可随时吊销 |
 | 外观 | 一昼一夜两套暖色配色（米黄纸 / 灯下暖光），切换即时生效并持久化到服务端 |
@@ -184,11 +185,11 @@ morrow-calendar/
 │   ├── bootstrap.ts           首次启动引导（自动建号或交棒给浏览器）
 │   ├── config.ts              端口 / 库路径 / 时区 / 鉴权 / 各类上限
 │   ├── db/                    SQLite 驱动抽象 + 结构迁移
-│   ├── lib/                   时间、口令、令牌、cookie、错误
+│   ├── lib/                   时间、口令、令牌、cookie、错误、iCalendar 序列化
 │   ├── middleware/auth.ts     身份解析（令牌 / 会话 / 本机隐式用户）
 │   ├── repository/            users · sessions · tokens · calendars · events · settings
 │   ├── services/              与 Express 无关的业务规则层，REST 与 MCP 共用
-│   ├── routes/                meta · setup · auth · users · tokens · calendars · events · settings
+│   ├── routes/                meta · setup · auth · users · tokens · calendars · events · export · settings
 │   ├── mcp/                   MCP 端点：身份桥接 · 工具注册 · 端点工厂
 │   └── scripts/               seed · smoke · token · passwd
 ├── src/                       前端：App / 侧栏 / 弹窗 / 设置 / 回收站 / 初始化 / 登录
@@ -302,7 +303,8 @@ morrow-calendar/
 按优先级排列，每项都尽量写到可以直接开工的程度。更详细的拆解、依赖与风险评估见 `docs/roadmap.md`。
 
 - [ ] **重复日程（RRULE 展开）**。挂 `recurrencePlugin`，后端实现 RFC 5545 展开，编辑 / 删除时支持「仅此次 / 此后全部 / 全部」。冲突检测要从「两条区间重叠」升级为「展开后实例两两比对」。这是全项目最复杂的一块，建议单独开一轮。
-- [ ] **`.ics` 导入导出**。导出单条或全部为 iCalendar 文件，导入外部日历时先走 `dry_run` 预览字段映射结果。组件工具栏已有「导出」入口，补后端接口即可。
+- [x] **`.ics` 导出**。`GET /api/export/events.ics`，可按区间 / 分组 / 指定 id 导出；界面上是头部那个「导出」——选着分组就只导那一组。定时日程写 UTC、全天日程写 `VALUE=DATE`（`DTEND` 自动加一天），中文按 75 个八位组折行且不会劈开汉字。
+- [ ] **`.ics` 导入**。导入外部日历时先走 `dry_run` 预览字段映射结果，重复判定要能认出「同标题同时间」。导出这半边已经完成，序列化逻辑可以直接借来核对。
 - [ ] **界面多语言（i18n）**。目前界面文案散在各组件里、`@ilamy/calendar` 的 92 项内置翻译写死在 `src/i18n/zh-CN.ts`。先抽成 zh-CN / en-US 两套资源，语言偏好按用户持久化到服务端（和 `theme` 一样存进 `settings` 表）。后端返回的 `message` 暂时保持中文，但 `code` 已经稳定，前端可以按 code 自己映射文案——所以这件事不需要动接口，也不用改数据模型。
 - [ ] **日程提醒**。提前 N 分钟触发，先做浏览器通知，再看要不要加 Webhook / 邮件。依赖一个常驻进程（已有 systemd / pm2 守护）。
 - [ ] **键盘快捷键**。新建 / 保存 / 撤销（`Ctrl+Enter`、`Ctrl+S`、`Ctrl+Z` 等）、快速切换视图、一键回到今天。要点：输入框里要放行原生快捷键，别把「撤销文字」抢成「撤销日程」。

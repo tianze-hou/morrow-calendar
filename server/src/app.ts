@@ -11,6 +11,7 @@ import { createMcpEndpoint } from './mcp';
 import authRouter from './routes/auth';
 import calendarsRouter from './routes/calendars';
 import eventsRouter from './routes/events';
+import exportRouter from './routes/export';
 import metaRouter, { ENDPOINT_CATALOG } from './routes/meta';
 import settingsRouter from './routes/settings';
 import setupRouter from './routes/setup';
@@ -93,6 +94,7 @@ export function createApp() {
   app.use('/api/calendars', calendarsRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/events', eventsRouter);
+  app.use('/api/export', exportRouter);
 
   /**
    * MCP 端点（Model Context Protocol）。

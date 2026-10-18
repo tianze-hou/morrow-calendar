@@ -223,6 +223,29 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 - 一旦库里存在任何用户，`POST /setup/admin` 返回 `409 ALREADY_EXISTS`；已初始化的实例上 `/meta` 的 `onboarding.required` 为 `false`。
 - Agent 遇到 `onboarding.required: true` 时，正确做法是提示人类去打开网页完成初始化，而不是尝试代劳——首个管理员的凭据只应来自人。
 
+### 4.8 导出
+
+| 方法 | 路径 | 说明 | 风险 | 需鉴权 |
+| --- | --- | --- | --- | --- |
+| GET | `/export/events.ics` | 导出为 iCalendar，返回 `text/calendar` | safe | 是 |
+
+参数与 `/events` 的查询一致，另外多一个 `ids`：
+
+| 参数 | 说明 |
+| --- | --- |
+| `from` / `to` / `window` | 导出区间；都不传就是全部 |
+| `calendar_id` | 只导某个分组。日历名与文件名会跟着用分组名，导进手机后能看出这是哪一组 |
+| `ids` | 逗号分隔的日程 id。传了就只导这几条，区间参数被忽略 |
+
+两个响应头值得注意：`X-Event-Count` 直接给出条数（不必解析文件就能核对），`Content-Disposition` 同时写了 ASCII 兜底的 `filename=` 与 RFC 5987 的 `filename*=UTF-8''`，所以中文分组名不会变成乱码。
+
+文件本身有几处是刻意这么写的：
+
+- **定时日程一律 UTC**，不带 `TZID`。带时区名的写法则要求客户端认得那个名字，认不出就整条落错位置；UTC 是绝对时刻，没有这个前提。`X-WR-TIMEZONE` 只影响客户端默认按哪个时区展示，不参与换算。
+- **全天日程用 `VALUE=DATE`**，`DTEND` 是开区间（不含当天）。库里存的是 `00:00:00–23:59:59` 的闭区间，导出时已自动加一天，否则导进别家日历会少一天。
+- **按 75 个八位组折行**，切点按码点算。按字节切会把一个汉字劈成两半，客户端解出来就是乱码。
+- 颜色写在非标准的 `X-MORROW-COLOR` 里，分组名写在 `CATEGORIES` 里。别家日历会忽略前者，将来自己做导入时可以原样还原。
+
 ## 5. 写操作的三个通用开关
 
 任意写接口（POST/PATCH/PUT/DELETE）都支持这些查询参数：
@@ -372,4 +395,5 @@ curl -s -X POST -H "$H" -H 'content-type: application/json' "$BASE/calendars" -d
 | 日历共享 / 团队成员 | 未实现，每个用户的日历彼此不可见；数据模型已为将来的成员表留位。 |
 | 日程提醒 / 通知 | 未实现 |
 | 附件 | 未实现 |
+| .ics 导入 | 未实现。导出已支持（见 4.8）；导入要先定字段映射与重复判定，打算走 `dry_run` 先给预览。 |
 | 用户自行注册 | 未实现，账号只能由管理员创建。首个管理员经初始化引导产生，不属于自助注册。 |

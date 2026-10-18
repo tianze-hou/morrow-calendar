@@ -1,6 +1,7 @@
 /**
  * 端到端冒烟自测：拉起真实服务（独立端口 + 临时数据库），跑完即删库。
- * 覆盖：鉴权、多用户数据隔离、日历分组、回收站、令牌、以及原有的 CRUD/幂等/乐观锁。
+ * 覆盖：鉴权、多用户数据隔离、日历分组、回收站、令牌、iCalendar 导出，
+ * 以及原有的 CRUD/幂等/乐观锁。
  *
  * 用法：
  *   npm run smoke                                 对本地临时实例跑
@@ -460,7 +461,60 @@ async function main() {
     const demoteSelf = await call('PATCH', `/users/${adminId}`, { role: 'member' }, { jar: admin });
     check('最后一个管理员不能被降级（409 LAST_ADMIN）', demoteSelf.status === 409 && errCode(demoteSelf) === 'LAST_ADMIN');
 
-    /* ── 13. 清空回收站与登出 ──────────────────────────── */
+    /* ── 13. iCalendar 导出 ────────────────────────────── */
+    const icsEvent = await call(
+      'POST',
+      '/events',
+      {
+        title: '导出测试; 带分号, 与换行\n第二行',
+        start: '2026-11-10T09:00:00+08:00',
+        end: '2026-11-10T10:30:00+08:00',
+        location: '上海, 杨浦',
+      },
+      { jar: admin },
+    );
+    check('导出前置：日程已创建', icsEvent.status === 201, icsEvent.json);
+    await call(
+      'POST',
+      '/events',
+      { title: '全天导出', start: '2026-11-11', end: '2026-11-11', allDay: true, timezone: 'Asia/Shanghai' },
+      { jar: admin },
+    );
+
+    const icsRes = await fetch(`${BASE}/export/events.ics`, { headers: admin.header() });
+    const ics = await icsRes.text();
+    check('GET /export/events.ics 返回 200', icsRes.status === 200, icsRes.status);
+    check(
+      'Content-Type 是 text/calendar',
+      (icsRes.headers.get('content-type') ?? '').includes('text/calendar'),
+      icsRes.headers.get('content-type'),
+    );
+    check(
+      'Content-Disposition 带 RFC 5987 文件名',
+      (icsRes.headers.get('content-disposition') ?? '').includes("filename*=UTF-8''"),
+    );
+    check('文件以 VCALENDAR 起止', ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.endsWith('END:VCALENDAR\r\n'));
+    check(
+      '每行不超过 75 个八位组',
+      ics.split('\r\n').every((line) => Buffer.byteLength(line, 'utf8') <= 75),
+    );
+    check('换行统一是 CRLF', !/[\r\n]/.test(ics.replace(/\r\n/g, '')));
+    check('分号 / 逗号 / 换行已转义', ics.includes('SUMMARY:导出测试\\; 带分号\\, 与换行\\n第二行'), ics.slice(0, 400));
+    check(
+      '全天日程用 VALUE=DATE，结束日推到次日',
+      ics.includes('DTSTART;VALUE=DATE:20261111') && ics.includes('DTEND;VALUE=DATE:20261112'),
+    );
+    check('定时日程写成 UTC', /DTSTART:\d{8}T\d{6}Z/.test(ics));
+    check('X-Event-Count 与实际条数一致', Number(icsRes.headers.get('x-event-count')) > 0);
+
+    const oneId = data<{ result: { id: string } }>(icsEvent).result.id;
+    const oneIcs = await (await fetch(`${BASE}/export/events.ics?ids=${oneId}`, { headers: admin.header() })).text();
+    check('ids 参数只导指定那一条', (oneIcs.match(/BEGIN:VEVENT/g) ?? []).length === 1, oneIcs.slice(0, 200));
+
+    const anonIcs = await fetch(`${BASE}/export/events.ics`);
+    check('未登录导出被挡住（401）', anonIcs.status === 401);
+
+    /* ── 14. 清空回收站与登出 ──────────────────────────── */
     const emptyDry = await call('POST', '/events/trash/empty?dry_run=true', undefined, { jar: admin });
     check('清空回收站支持 dry_run', data<{ dryRun: boolean }>(emptyDry).dryRun === true);
 
@@ -476,7 +530,7 @@ async function main() {
     const afterLogout = await call('GET', '/auth/me', undefined, { jar: admin });
     check('登出后会话失效（401）', afterLogout.status === 401);
 
-    /* ── 14. 恢复出厂设置 ──────────────────────────────── */
+    /* ── 15. 恢复出厂设置 ──────────────────────────────── */
     await call('POST', '/auth/login', { username: ADMIN_USER, password: ADMIN_PASS }, { jar: admin });
     await call('POST', '/settings/reset', undefined, { jar: admin });
     const settings2 = await call('GET', '/settings', undefined, { jar: admin });

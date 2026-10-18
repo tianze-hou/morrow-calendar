@@ -19,7 +19,7 @@ import {
   type UpdateEventInput,
   type User,
 } from '../shared/types';
-import { api, ApiError, auth as authApi, calendars as calendarsApi, events as eventsApi, settings as settingsApi, setup as setupApi } from './api/client';
+import { api, ApiError, auth as authApi, calendars as calendarsApi, downloadIcs, events as eventsApi, settings as settingsApi, setup as setupApi } from './api/client';
 import { CalendarSidebar } from './components/CalendarSidebar';
 import { COLOR_HEX } from './components/colors';
 import { EventDialog, type DialogDraft } from './components/EventDialog';
@@ -30,6 +30,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { TrashPanel } from './components/TrashPanel';
 import { Btn, Icon } from './components/ui';
 import { applyTheme, clearLocalSettings, readLocalSettings, writeLocalSettings } from './theme';
+import { saveBlob } from './lib/download';
 import { zhCN } from './i18n/zh-CN';
 
 dayjs.locale('zh-cn');
@@ -466,6 +467,26 @@ export default function App() {
     [events, reload, notify],
   );
 
+  /**
+   * 导出 .ics。
+   *
+   * 侧栏选着某个分组就只导那一组 —— 界面上「我正看着这一组」，导出时却把全部
+   * 塞进去，是会让人反复检查文件的那种意外。没选就是全部。
+   */
+  const handleExport = useCallback(async () => {
+    try {
+      const { blob, filename } = await downloadIcs({ calendarId: selectedCalendarId ?? undefined });
+      saveBlob(blob, filename);
+      notify('ok', '已导出 .ics');
+    } catch (e) {
+      if (e instanceof ApiError && e.isAuthError) {
+        handleAuthExpired();
+        return;
+      }
+      notify('err', e instanceof ApiError ? e.message : '导出失败');
+    }
+  }, [selectedCalendarId, notify, handleAuthExpired]);
+
   /* --------------------------------------------------------- 弹窗入口 */
 
   const openCreate = useCallback(
@@ -712,6 +733,15 @@ export default function App() {
             <Icon name="refresh" size={14} />
             <span className="hidden sm:inline">刷新</span>
           </Btn>
+          <Btn
+            variant="ghost"
+            size="sm"
+            onClick={() => void handleExport()}
+            title={selectedCalendarId ? '导出当前分组为 .ics' : '导出全部日程为 .ics'}
+          >
+            <Icon name="download" size={14} />
+            <span className="hidden sm:inline">导出</span>
+          </Btn>
           {sidebarCollapsed && !isMobile && (
             <Btn variant="ghost" size="sm" onClick={() => setShowTrash(true)} title="回收站">
               <Icon name="trash" size={14} />
@@ -809,6 +839,11 @@ export default function App() {
             timezone="Asia/Shanghai"
             scrollTime="08:00:00"
             scrollToNow
+            // 组件自带的导出按钮关掉，改用头部那个走服务端的导出：
+            // 它只导「已经加载进来的」那一段（我们按可见范围分页拉取），翻到上个月
+            // 之前的日程会静默漏掉；全天日程的 DTEND 也没按 RFC 的开区间加一天，
+            // 导进别家日历会少一天。两个「导出」并排更容易让人随手点错。
+            hideExportButton
             onCellClick={openCreate}
             onEventClick={openEdit}
             onEventUpdate={handleDragUpdate}

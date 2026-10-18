@@ -34,7 +34,14 @@ cd "$SRC_DIR"
 # 先 --omit=dev 再 build 会直接失败。所以顺序是：全量装 → 构建 → 剪掉 dev，
 # 只把运行时依赖带到安装目录。显式写 --include=dev，避免部署 shell 里带着
 # NODE_ENV=production 时 npm 自动省略 dev 依赖。
-npm ci --include=dev --no-audit --no-fund
+#
+# SKIP_INSTALL=1 由 update-from-github.sh 在「package-lock 没变」时传入：
+# 那种情况下 node_modules 是上一版构建留下的完整拷贝，重装纯属浪费时间。
+if [ "${SKIP_INSTALL:-0}" = "1" ] && [ -d node_modules ]; then
+  log "跳过依赖安装（SKIP_INSTALL=1，复用上一版依赖）"
+else
+  npm ci --include=dev --no-audit --no-fund --prefer-offline
+fi
 
 # better-sqlite3 的预编译二进制要从 GitHub Releases 下载。服务器访问不到时会静默
 # 回退到 node-sqlite3-wasm，而 WASM 的 VFS 不支持 WAL 模式的生产库，服务会直接
@@ -46,6 +53,17 @@ if [ -d node_modules/better-sqlite3 ] &&
 fi
 
 npm run build
+
+# 构建成功后把「完整依赖」存进缓存目录，下次 package-lock 没变就能直接复用。
+# 必须在 prune 之前做：prune 会把 devDependencies 删掉，而下次构建还要用。
+if [ -n "${BUILD_CACHE_DIR:-}" ]; then
+  log "更新构建缓存：$BUILD_CACHE_DIR"
+  mkdir -p "$BUILD_CACHE_DIR"
+  rsync -a --delete "$SRC_DIR/node_modules/" "$BUILD_CACHE_DIR/node_modules/"
+  sha256sum "$SRC_DIR/package-lock.json" | cut -d' ' -f1 > "$BUILD_CACHE_DIR/lock.sha"
+  node -v > "$BUILD_CACHE_DIR/node.version"
+fi
+
 npm prune --omit=dev
 [ -f dist-server/index.mjs ] || die "后端构建产物缺失"
 [ -f dist/index.html ] || die "前端构建产物缺失"

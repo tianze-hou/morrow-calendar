@@ -15,6 +15,11 @@ export interface CalendarSidebarProps {
   onOpenTrash: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  /**
+   * 是否与日历并排常驻。手机端传 false：此时侧栏装在抽屉里，宽度交给外层容器，
+   * 右上角那个「收起」按钮也改成「关闭」。
+   */
+  docked?: boolean;
 }
 
 export function CalendarSidebar({
@@ -27,6 +32,7 @@ export function CalendarSidebar({
   onOpenTrash,
   collapsed,
   onToggleCollapse,
+  docked = true,
 }: CalendarSidebarProps) {
   const [editing, setEditing] = useState<CalendarGroup | null>(null);
   const [creating, setCreating] = useState(false);
@@ -42,7 +48,7 @@ export function CalendarSidebar({
     }
   }
 
-  if (collapsed) {
+  if (collapsed && docked) {
     return (
       <aside className="flex w-12 shrink-0 flex-col items-center gap-2 border-r border-border bg-sidebar py-3">
         <button
@@ -73,9 +79,17 @@ export function CalendarSidebar({
   }
 
   const total = items.reduce((sum, c) => sum + (counts[c.id] ?? 0), 0);
+  /** 抽屉里的行更高一些：拇指点得中，30px 的行高在手机上太挤 */
+  const rowPad = docked ? 'py-1.5' : 'py-2.5';
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar">
+    <aside
+      className={
+        docked
+          ? 'flex w-60 shrink-0 flex-col border-r border-border bg-sidebar'
+          : 'flex h-full w-full flex-col bg-sidebar'
+      }
+    >
       <div className="flex items-center justify-between px-3.5 pb-2 pt-3">
         <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-medium tracking-wide">日历</h2>
@@ -90,18 +104,18 @@ export function CalendarSidebar({
               setError(null);
               setCreating(true);
             }}
-            className="rounded-[var(--radius-sm)] p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="rounded-[var(--radius-sm)] p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <Icon name="plus" size={15} />
           </button>
           <button
             type="button"
-            aria-label="收起侧栏"
-            title="收起侧栏"
+            aria-label={docked ? '收起侧栏' : '关闭侧栏'}
+            title={docked ? '收起侧栏' : '关闭'}
             onClick={onToggleCollapse}
-            className="rounded-[var(--radius-sm)] p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="rounded-[var(--radius-sm)] p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            <Icon name="chevronDown" size={15} />
+            <Icon name={docked ? 'chevronDown' : 'close'} size={15} />
           </button>
         </div>
       </div>
@@ -116,7 +130,7 @@ export function CalendarSidebar({
         <button
           type="button"
           onClick={() => onSelect(null)}
-          className={`mb-0.5 flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-sm transition-colors ${
+          className={`mb-0.5 flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2 ${rowPad} text-left text-sm transition-colors ${
             selectedId === null ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60'
           }`}
         >
@@ -134,7 +148,7 @@ export function CalendarSidebar({
           return (
             <div
               key={item.id}
-              className={`group mb-0.5 flex items-center gap-1.5 rounded-[var(--radius-md)] px-2 py-1.5 transition-colors ${
+              className={`group mb-0.5 flex items-center gap-1.5 rounded-[var(--radius-md)] px-2 ${rowPad} transition-colors ${
                 active ? 'bg-accent' : 'hover:bg-accent/60'
               }`}
             >
@@ -179,7 +193,9 @@ export function CalendarSidebar({
                   setError(null);
                   setEditing(item);
                 }}
-                className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                className={`shrink-0 text-muted-foreground transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 ${
+                  docked ? 'opacity-0' : 'opacity-100'
+                }`}
               >
                 <Icon name="settings" size={14} />
               </button>
@@ -192,7 +208,7 @@ export function CalendarSidebar({
         <button
           type="button"
           onClick={onOpenTrash}
-          className="flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className={`flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2 ${rowPad} text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground`}
         >
           <span className="flex w-4 justify-center">
             <Icon name="trash" size={14} />

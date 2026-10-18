@@ -13,6 +13,11 @@
 
 ![周视图](docs/screenshots/week.png)
 
+手机上是另一套排布：侧栏变抽屉、日期默认进日视图，时间刻度列也收窄了。
+
+<img src="docs/screenshots/mobile.png" alt="手机端日视图" width="300">
+
+
 ## 为什么说它是 AI-native
 
 「给 AI 留个接口」和「本来就是给 AI 用的」是两件事。这个项目在后者上做了一些具体的事，都不大，但连起来能让 Agent 少犯很多错：
@@ -51,6 +56,7 @@
 | 多用户 | 口令登录（scrypt 哈希 + HttpOnly 会话）、管理员建号 / 停用 / 重置口令 / 升降角色 |
 | API 令牌 | 每用户可签发多个长期令牌给 AI Agent 用，明文只显示一次，可随时吊销 |
 | 外观 | 一昼一夜两套配色，切换即时生效并持久化到服务端 |
+| 移动端 | 手机上侧栏收成抽屉、日历默认进日视图；适配刘海与底部安全区；有独立的 favicon 与 iOS 主屏图标 |
 | AI 协作 | `dry_run` 预演、`Idempotency-Key` 防重、机器可读错误码、批量操作与原子回滚 |
 
 ## 快速开始（本地）
@@ -134,11 +140,18 @@ npm run passwd -- --user admin --password '新口令'
 
 ```bash
 sudo morrow-update                 # 从 GitHub 拉最新版本并重新部署
-sudo morrow-update --check         # 只看有没有新版本
+sudo morrow-update --check         # 只看有没有新版本，会列出中间差了哪几个提交
+sudo morrow-update --status        # 当前版本 / 服务状态 / 健康检查 / 最近备份
+sudo morrow-update --rollback      # 回到上一个装过的版本
 sudo morrow-update v0.3.0          # 指定 tag / 分支 / commit
 ```
 
-这套不走 `git pull`，而是用 `api.github.com` 解析版本、`codeload.github.com` 下载源码包，服务器不需要放密钥、也不需要 git 工作副本——`github.com` 的 HTTPS 在很多网络里不通，那两个域名通常通。服务器上只有 git 工作副本时用 `deploy/update.sh`。
+几点实现上的取舍：
+
+- **不走 `git pull`**：用 `api.github.com` 解析版本、`codeload.github.com` 下载源码包，服务器不需要放密钥、也不需要 git 工作副本——`github.com` 的 HTTPS 在很多网络里不通，那两个域名通常通。服务器上只有 git 工作副本时用 `deploy/update.sh`。
+- **依赖没变就不重装**：`package-lock.json` 与 Node 版本都没变时，复用 `/var/cache/morrow-calendar/build` 里的完整依赖，跳过 `npm ci`——这一步通常是整条升级里最慢、也最容易因网络失败的。
+- **短命令自己维护**：`update-from-github.sh` 每次成功运行都会把 `/usr/local/bin/morrow-update` 重写成指向注册目录里那份脚本，不需要另外安装，也不会指向旧路径。
+- **并发保护**：升级过程持有 `/var/lock/morrow-update.lock`，第二个 `morrow-update` 会被直接拒绝，不会两个进程一起写代码目录。
 
 ## 命令一览
 

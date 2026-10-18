@@ -280,27 +280,34 @@ systemctl start morrow-calendar
 
 ```bash
 sudo morrow-update                  # 升到 GitHub 默认分支的最新版本
-sudo morrow-update --check          # 只看有没有新版本，不装
+sudo morrow-update --check          # 只看有没有新版本，不装（会列出中间差了哪几个提交）
+sudo morrow-update --status         # 当前版本 / 服务状态 / 健康检查 / 最近备份
+sudo morrow-update --rollback       # 回到上一个装过的版本
 sudo morrow-update v0.3.0           # 升到指定 tag / 分支 / commit
 sudo morrow-update --force          # 版本没变也重装一遍
 sudo morrow-update --no-backup      # 跳过升级前备份（不建议）
+sudo morrow-update --no-cache       # 不复用构建缓存，强制重新装依赖
 ```
 
-`morrow-update` 是 `deploy/update-from-github.sh` 的短命令入口（装在 `/usr/local/bin`）。也可以直接跑脚本本身。
+`morrow-update` 是 `deploy/update-from-github.sh` 的短命令入口（装在 `/usr/local/bin`）。这个短命令由脚本自己维护：每次成功运行都会重写一遍，指向注册目录里那份脚本——所以升级脚本本身不需要人工安装，也不会停留在旧路径。当然也可以直接跑脚本本身。
 
 **为什么不用 `git pull`**：`github.com` 的 HTTPS 在不少网络里是不通的（`git clone` / `git ls-remote` 直接超时），但 `api.github.com` 和 `codeload.github.com` 通常通。所以脚本改成两步走——用 API 把分支名 / tag / commit 解析成确切的 commit sha，再从 codeload 下载该 sha 的源码包，然后交给 `deploy/deploy.sh` 走原有流程。仓库公开时全程免鉴权，**服务器上不需要放任何密钥**。
 
 脚本按顺序做这些事：
 
 1. 体检：root 权限、Node 版本、curl / tar / rsync、数据库不在代码目录内
-2. 解析远端版本，与 `$APP_DIR/.deploy-version` 里记录的本机版本比对，相同就直接退出
-3. 备份数据库（`deploy/backup.sh`，服务运行中也能安全备份）
-4. 下载源码包并校验（空包或 tar 解不开会中止）
-5. 把当前代码存为回滚点 `$PREV_DIR`（默认 `/opt/morrow-calendar.prev`，只存源码，不含 `node_modules`）
-6. `npm ci` → 构建 → 安装 → 重启 → 健康检查
-7. 记录新版本到 `.deploy-version`
+2. 取互斥锁 `/var/lock/morrow-update.lock`，防止两个更新同时写代码目录
+3. 解析远端版本，与 `$APP_DIR/.deploy-version` 里记录的本机版本比对，相同就直接退出
+4. 备份数据库（`deploy/backup.sh`，服务运行中也能安全备份）
+5. 下载源码包并校验（空包或 tar 解不开会中止）
+6. `package-lock.json` 与 Node 版本都没变时，从 `/var/cache/morrow-calendar/build` 复用依赖，跳过 `npm ci`
+7. 把当前代码存为回滚点 `$PREV_DIR`（默认 `/opt/morrow-calendar.prev`，只存源码，不含 `node_modules`）
+8. 构建 → 安装 → 重启 → 健康检查
+9. 记录新版本到 `.deploy-version`，并刷新 `/usr/local/bin/morrow-update`
 
-第 4 步之后任一步失败，会自动用回滚点重新部署一次；回滚也失败时会明确告诉你服务可能处于停止状态、该查什么日志。数据目录全程不碰。
+第 5 步之后任一步失败，会自动用回滚点重新部署一次；回滚也失败时会明确告诉你服务可能处于停止状态、该查什么日志。数据目录全程不碰。
+
+构建缓存省掉的是 `npm ci` —— 它要从外网装 600+ 个包，既是整条升级里最耗时的步骤，也是最容易因网络抖动失败的一步。依赖真有变化（`package-lock.json` 变了）或 Node 大版本变了，缓存自动失效，回到完整安装。
 
 想固定线上版本就在本地打 tag（`git tag v0.3.0 && git push --tags`），服务器上 `sudo morrow-update v0.3.0`；回退就再执行一次旧 tag。
 

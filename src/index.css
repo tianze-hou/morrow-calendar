@@ -182,31 +182,79 @@ h4 {
 
 /*
  * 日历组件内部的微调。
- * 组件只消费 shadcn 语义类，并挂了一批 data-* 钩子（已核对真实取值：
- * data-slot / data-view / data-today / data-outside / data-selected / data-dragging）。
- * 这里只做「比例与可读性」层面的小修，不改结构、不覆盖配色。
+ * 组件只消费 shadcn 语义类，并挂了一批钩子。这里只以**实际存在**的钩子为锚点
+ * （已按 3.2.1 的真实 DOM 核对过）：
+ *   data-testid = calendar-body / vertical-grid-scroll / vertical-col-time-col
+ *   data-hour / data-outside / data-dragging / data-drop-target
+ * 不做结构改动，也不覆盖配色。
  */
-[data-slot='calendar'] {
+[data-testid='calendar-body'] {
   font-size: var(--text-sm);
   line-height: 1.5;
 }
 
 /* 非本月/非当天的格子把文字压暗，但当天的标记要立得住 */
-[data-slot='calendar'] [data-outside='true'] {
+[data-testid='calendar-body'] [data-outside='true'] {
   color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
 }
 
 /* 分钟刻度与时刻标签：等宽数字，纵向对齐更稳 */
-[data-slot='calendar'] [data-hour] {
+[data-testid='calendar-body'] [data-hour] {
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
 
 /* 拖拽中的日程块降低不透明度并给一个清晰的目标态 */
-[data-slot='calendar'] [data-dragging='true'] {
+[data-testid='calendar-body'] [data-dragging='true'] {
   opacity: 0.55;
 }
-[data-slot='calendar'] [data-drop-target='true'] {
+[data-testid='calendar-body'] [data-drop-target='true'] {
   outline: 2px dashed var(--ring);
   outline-offset: -2px;
+}
+
+/* ───────────────────────── 手机端 ─────────────────────────
+ * 断点与 Tailwind 的 md(768px) 保持一致，改宽度时两处一起改。
+ */
+
+/* iPhone 刘海 / 底部横条：只在这两处让开，其余留白不动 */
+@media (max-width: 767px) {
+  .app-header {
+    padding-top: env(safe-area-inset-top, 0px);
+    height: calc(3rem + env(safe-area-inset-top, 0px));
+  }
+}
+
+@media (max-width: 767px) {
+  /* 移动端下拉刷新会跟日历内的纵向滚动打架，禁掉整页的橡皮筋 */
+  body {
+    overscroll-behavior-y: none;
+  }
+
+  /* 手机上日历整体降一档字号：390px 宽度里 13px 的行内标题太挤 */
+  [data-testid='calendar-body'] {
+    font-size: var(--text-xs);
+  }
+
+  /*
+   * 时间刻度列收窄。
+   * 组件把它写死成 64px，在 390px 的手机上占掉 16%，而这一列只需要放得下
+   * 「08」两个字 —— 压到 44px，日程块多出 20px 宽度。
+   */
+  [data-testid='vertical-col-time-col'] {
+    width: 2.75rem;
+    min-width: 2.75rem;
+    max-width: 2.75rem;
+  }
+
+  /* 抽屉底部让开 iOS 的 home indicator，顶部让开刘海 */
+  .app-drawer {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* 触摸设备没有 hover，点按反馈用底色代替 hover 色 */
+  [data-testid='calendar-body'] button:active {
+    background: color-mix(in srgb, var(--muted-foreground) 14%, transparent);
+  }
 }

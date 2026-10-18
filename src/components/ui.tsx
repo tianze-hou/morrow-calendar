@@ -231,6 +231,7 @@ export function Modal({
 
 const PATHS: Record<string, string> = {
   close: 'M4 4l10 10M14 4L4 14',
+  menu: 'M3 5h12M3 9h12M3 13h12',
   plus: 'M9 3.5v11M3.5 9h11',
   trash: 'M3 5h12M7 5V3.5h4V5M4.5 5l.7 10h7.6l.7-10M7.5 8v4M10.5 8v4',
   settings:

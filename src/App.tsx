@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import { IlamyCalendar } from '@ilamy/calendar';
@@ -33,6 +33,28 @@ import { applyTheme, clearLocalSettings, readLocalSettings, writeLocalSettings }
 import { zhCN } from './i18n/zh-CN';
 
 dayjs.locale('zh-cn');
+
+/**
+ * 手机断点（与 Tailwind 的 md=768px 对齐）。
+ *
+ * 用 useSyncExternalStore 而不是「useState + resize 监听」：后者首次渲染拿不到
+ * 真实值，会先按桌面布局闪一帧，再跳成手机布局 —— 在真机上就是一次可见的抖动。
+ */
+const MOBILE_QUERY = '(max-width: 767px)';
+
+function subscribeViewport(onChange: () => void) {
+  const mql = window.matchMedia(MOBILE_QUERY);
+  mql.addEventListener('change', onChange);
+  return () => mql.removeEventListener('change', onChange);
+}
+
+function useIsMobile(): boolean {
+  return useSyncExternalStore(
+    subscribeViewport,
+    () => window.matchMedia(MOBILE_QUERY).matches,
+    () => false,
+  );
+}
 
 /** 插件数组放到模块级常量：避免每次渲染重建导致日历内部 memo 全部失效。 */
 const plugins = [agendaPlugin({ window: 'week' })];
@@ -115,6 +137,9 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(null);
+  /** 手机端侧栏是抽屉：独立开关，不吃 settings.sidebarOpen（那是桌面端的偏好） */
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [draft, setDraft] = useState<DialogDraft | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
@@ -280,6 +305,11 @@ export default function App() {
     if (authState !== 'authed') return;
     void reloadTrashCount();
   }, [authState, reloadTick, reloadTrashCount]);
+
+  /** 转回桌面宽度时把抽屉状态收掉，否则下次变窄会自己弹开 */
+  useEffect(() => {
+    if (!isMobile) setMobileNavOpen(false);
+  }, [isMobile]);
 
   /* ------------------------------------------------------- 可见性过滤 */
 
@@ -637,30 +667,52 @@ export default function App() {
 
   const sidebarCollapsed = !settings.sidebarOpen;
 
+  /**
+   * 手机上把默认的「周视图」换成「日视图」。
+   *
+   * 周视图是 7 列等宽 + 时间轴，390px 宽的手机上每列不到 50px，日程标题全被
+   * 截成一个字 —— 不是排版难看，是根本读不了。只在挂载时生效（initialView），
+   * 用户自己切回周视图不会被抢回来，服务端存的 defaultView 也不改。
+   */
+  const initialView = isMobile && settings.defaultView === 'week' ? 'day' : settings.defaultView;
+
+  const closeMobileNav = () => setMobileNavOpen(false);
+
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border px-5">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="app-header flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-3 sm:h-14 sm:gap-4 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          {/* 手机端：侧栏入口。桌面端侧栏常驻，这个按钮不出现 */}
+          <button
+            type="button"
+            aria-label="打开日历侧栏"
+            aria-expanded={mobileNavOpen}
+            onClick={() => setMobileNavOpen(true)}
+            className="-ml-1 rounded-[var(--radius-sm)] p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+          >
+            <Icon name="menu" size={18} />
+          </button>
+
           {/* 包豪斯式的几何标记：方 + 圆 + 方 */}
           <div className="flex items-center gap-1" aria-hidden="true">
             <span className="h-2.5 w-2.5 bg-primary" />
             <span className="h-2.5 w-2.5 rounded-full border border-primary" />
             <span className="h-2.5 w-2.5 bg-primary" />
           </div>
-          <h1 className="text-base font-medium tracking-tight">日程管理</h1>
-          <span className="hidden text-xs text-muted-foreground sm:inline">
+          <h1 className="truncate text-base font-medium tracking-tight">日程管理</h1>
+          <span className="hidden truncate text-xs text-muted-foreground sm:inline">
             {loading ? '加载中…' : `${shownEvents.length} 条日程`}
             {selectedCalendarId &&
               ` · ${calendars.find((c) => c.id === selectedCalendarId)?.name ?? ''}`}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
           <Btn variant="ghost" size="sm" onClick={reload} title="重新拉取数据">
             <Icon name="refresh" size={14} />
             <span className="hidden sm:inline">刷新</span>
           </Btn>
-          {sidebarCollapsed && (
+          {sidebarCollapsed && !isMobile && (
             <Btn variant="ghost" size="sm" onClick={() => setShowTrash(true)} title="回收站">
               <Icon name="trash" size={14} />
               <span className="hidden sm:inline">回收站</span>
@@ -683,27 +735,73 @@ export default function App() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <CalendarSidebar
-          items={calendars}
-          counts={counts}
-          selectedId={selectedCalendarId}
-          onSelect={setSelectedCalendarId}
-          onChanged={() => {
-            void reloadCalendars();
-            reload();
-          }}
-          trashCount={trashCount}
-          onOpenTrash={() => setShowTrash(true)}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => void saveSettings({ sidebarOpen: sidebarCollapsed })}
-        />
+        {/* 桌面：与日历并排的常驻侧栏 */}
+        {!isMobile && (
+          <CalendarSidebar
+            items={calendars}
+            counts={counts}
+            selectedId={selectedCalendarId}
+            onSelect={setSelectedCalendarId}
+            onChanged={() => {
+              void reloadCalendars();
+              reload();
+            }}
+            trashCount={trashCount}
+            onOpenTrash={() => setShowTrash(true)}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => void saveSettings({ sidebarOpen: sidebarCollapsed })}
+          />
+        )}
 
-        <main className="min-h-0 flex-1 overflow-hidden p-4">
+        {/* 手机：抽屉。遮罩与面板都常驻，用位移做动画，避免每次开合都重挂组件 */}
+        {isMobile && (
+          <>
+            <div
+              aria-hidden="true"
+              onClick={closeMobileNav}
+              className={`fixed inset-0 z-40 bg-[var(--overlay)] transition-opacity duration-200 ${
+                mobileNavOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+              }`}
+            />
+            <div
+              role="dialog"
+              aria-modal={mobileNavOpen}
+              aria-label="日历分组"
+              className={`app-drawer fixed inset-y-0 left-0 z-50 w-[80%] max-w-[300px] border-r border-border bg-sidebar shadow-2xl transition-transform duration-200 ease-out ${
+                mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+              }`}
+            >
+              <CalendarSidebar
+                items={calendars}
+                counts={counts}
+                selectedId={selectedCalendarId}
+                onSelect={(id) => {
+                  setSelectedCalendarId(id);
+                  closeMobileNav();
+                }}
+                onChanged={() => {
+                  void reloadCalendars();
+                  reload();
+                }}
+                trashCount={trashCount}
+                onOpenTrash={() => {
+                  closeMobileNav();
+                  setShowTrash(true);
+                }}
+                collapsed={false}
+                docked={false}
+                onToggleCollapse={closeMobileNav}
+              />
+            </div>
+          </>
+        )}
+
+        <main className="min-h-0 flex-1 overflow-hidden p-2 sm:p-4">
           <IlamyCalendar
-            key={`${settings.firstDayOfWeek}-${settings.timeFormat}`}
+            key={`${settings.firstDayOfWeek}-${settings.timeFormat}-${isMobile ? 'm' : 'd'}`}
             events={calendarEvents}
             plugins={plugins}
-            initialView={settings.defaultView}
+            initialView={initialView}
             locale="zh-cn"
             translations={zhCN}
             timeFormat={settings.timeFormat}

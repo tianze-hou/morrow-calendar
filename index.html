@@ -2,8 +2,24 @@
 <html lang="zh-CN" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover：让页面铺到 iPhone 的刘海与圆角区，再用 env(safe-area-inset-*) 让开 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>日程管理 · morrow calendar</title>
+    <meta name="description" content="morrow calendar：自带 AI 友好 REST 接口的自建日程管理系统。" />
+
+    <!-- 图标：SVG 优先（现代浏览器），PNG 兜底；iOS 主屏图标用 180px 的 apple-touch-icon -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- 移动端浏览器地址栏配色（与 index.css 的 --background 对齐） -->
+    <meta name="theme-color" content="#1a1d21" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="日程" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
   </head>
   <body>
     <div id="root"></div>

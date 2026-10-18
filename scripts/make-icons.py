@@ -6,8 +6,12 @@
 import os
 from PIL import Image, ImageDraw
 
-BG = (0x16, 0x19, 0x1D, 255)
-FG = (0x7B, 0xA0, 0xC8, 255)
+# 温暖色系：米色纸底 + 陶土橘线条，取自白日主题（--background #f5f3ee）再暖一档。
+# 为什么主线条不用「浅橘」：浅橘压在米色上对比度不到 2:1，缩到 16px 会糊成一团。
+# 所以线条用暖赭橘（约 4.6:1），浅橘只留给大尺寸的当天标记做层次。
+BG = (0xF6, 0xEA, 0xD6, 255)
+FG = (0xB4, 0x65, 0x3A, 255)
+ACCENT = (0xCE, 0x84, 0x55, 255)
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'public')
 SRC = 64.0
 
@@ -39,7 +43,7 @@ def draw(size: int, rounded: bool, simple: bool = False) -> Image.Image:
     for x in (21.4, 38.2):
         d.rounded_rectangle(r(x, 10.6, x + 4.4, 21.0), radius=2.2 * k, fill=FG)
     d.rectangle(r(15.6, 26.6, 48.4, 29.0), fill=FG)
-    d.rectangle(r(23.0, 34.0, 31.6, 42.6), fill=FG)
+    d.rectangle(r(23.0, 34.0, 31.6, 42.6), fill=ACCENT)
 
     return img.resize((size, size), Image.LANCZOS)
 

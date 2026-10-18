@@ -1,12 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="morrow calendar">
-  <rect width="64" height="64" rx="14" fill="#16191d"/>
+  <!-- 温暖色系：米色纸底 + 陶土橘线条，取自白日主题的暖白纸感 -->
+  <rect width="64" height="64" rx="14" fill="#f6ead6"/>
   <!-- 日历页：与界面里那枚「方 + 圆 + 方」标记同一套几何语言 -->
-  <rect x="13" y="18" width="38" height="32" rx="4" fill="none" stroke="#7ba0c8" stroke-width="4.2"/>
+  <rect x="13" y="18" width="38" height="32" rx="4" fill="none" stroke="#b4653a" stroke-width="4.2"/>
   <!-- 两个挂环 -->
-  <rect x="21.4" y="10.6" width="4.4" height="10.4" rx="2.2" fill="#7ba0c8"/>
-  <rect x="38.2" y="10.6" width="4.4" height="10.4" rx="2.2" fill="#7ba0c8"/>
+  <rect x="21.4" y="10.6" width="4.4" height="10.4" rx="2.2" fill="#b4653a"/>
+  <rect x="38.2" y="10.6" width="4.4" height="10.4" rx="2.2" fill="#b4653a"/>
   <!-- 页眉分隔线 -->
-  <rect x="15.6" y="26.6" width="32.8" height="2.4" fill="#7ba0c8"/>
+  <rect x="15.6" y="26.6" width="32.8" height="2.4" fill="#b4653a"/>
   <!-- 当天标记 -->
-  <rect x="23" y="34" width="8.6" height="8.6" fill="#7ba0c8"/>
+  <rect x="23" y="34" width="8.6" height="8.6" fill="#ce8455"/>
 </svg>

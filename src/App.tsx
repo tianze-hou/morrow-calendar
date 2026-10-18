@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import dayjs from 'dayjs';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import dayjs, { type Dayjs } from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import { IlamyCalendar } from '@ilamy/calendar';
 import { agendaPlugin } from '@ilamy/calendar/plugins/agenda';
@@ -25,6 +26,7 @@ import { api, ApiError, auth as authApi, calendars as calendarsApi, downloadIcs,
 import { CalendarApiBridge } from './components/CalendarApiBridge';
 import { CalendarSidebar } from './components/CalendarSidebar';
 import { COLOR_HEX } from './components/colors';
+import { ContextMenu, type MenuItem } from './components/ContextMenu';
 import { EventDialog, type DialogDraft } from './components/EventDialog';
 import { LoginScreen } from './components/LoginScreen';
 import { AgendaNowLine, GridNowLine } from './components/NowIndicator';
@@ -35,6 +37,7 @@ import { TrashPanel } from './components/TrashPanel';
 import { Btn, Icon } from './components/ui';
 import { applyTheme, clearLocalSettings, readLocalSettings, writeLocalSettings } from './theme';
 import { saveBlob } from './lib/download';
+import { readContextTarget } from './lib/calendar-target';
 import { useHotkeys, type HotkeySpec } from './lib/hotkeys';
 import { zhCN } from './i18n/zh-CN';
 
@@ -100,9 +103,42 @@ function toCalendarEvent(ev: ScheduleEvent): CalendarEvent {
 /** 组件没有导出 DateRange，从 props 上反推，避免手写类型与实现漂移 */
 type VisibleRange = Parameters<NonNullable<IlamyCalendarProps['onDateChange']>>[1];
 
+/** 右键菜单的内容（坐标由调用处补上） */
+type MenuBody = { heading: string; note?: string; items: MenuItem[] };
+
+type MenuState = MenuBody & { x: number; y: number };
+
 const LOCAL_FMT = 'YYYY-MM-DDTHH:mm';
 /** 视图切换时前后各多取 3 天，避免月视图边缘出现空白 */
 const RANGE_BUFFER_DAYS = 3;
+
+/** 领域模型 → 弹窗草稿。左键点事件和右键菜单走同一条路，字段不会两处漂。 */
+function draftFromSchedule(ev: ScheduleEvent): DialogDraft {
+  return {
+    id: ev.id,
+    title: ev.title,
+    allDay: ev.allDay,
+    start: dayjs(ev.start).format(LOCAL_FMT),
+    end: dayjs(ev.end).format(LOCAL_FMT),
+    location: ev.location ?? '',
+    description: ev.description ?? '',
+    color: ev.color ?? 'blue',
+    calendarId: ev.calendarId,
+  };
+}
+
+/** 事件的时间段文案，右键菜单顶部用。全天日程不写时分，免得像在撒谎。 */
+function eventTimeNote(ev: ScheduleEvent): string {
+  const start = dayjs(ev.start);
+  const end = dayjs(ev.end);
+  if (ev.allDay) {
+    const lastDay = end.subtract(1, 'day');
+    return start.isSame(lastDay, 'day')
+      ? `${start.format('M月D日')} 全天`
+      : `${start.format('M月D日')} – ${lastDay.format('M月D日')} 全天`;
+  }
+  return `${start.format('M月D日 HH:mm')} – ${end.format(start.isSame(end, 'day') ? 'HH:mm' : 'M月D日 HH:mm')}`;
+}
 
 /**
  * 把日历组件「内置的新建/编辑表单」接到我们自己的 EventDialog 上。
@@ -163,6 +199,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [trashCount, setTrashCount] = useState(0);
@@ -542,14 +579,14 @@ export default function App() {
 
   /* --------------------------------------------------------- 弹窗入口 */
 
-  const openCreate = useCallback(
-    (info: CellInfo) => {
+  /** 空白草稿的统一出口：点格、右键、工具栏三个入口只是起始时间不同 */
+  const openBlank = useCallback(
+    (start: Dayjs, end: Dayjs, allDay = false) => {
       setWarnings([]);
-      const end = info.end ?? info.start.add(1, 'hour');
       setDraft({
         title: '',
-        allDay: info.allDay ?? false,
-        start: info.start.format(LOCAL_FMT),
+        allDay,
+        start: start.format(LOCAL_FMT),
         end: end.format(LOCAL_FMT),
         location: '',
         description: '',
@@ -560,37 +597,45 @@ export default function App() {
     [defaultCalendarId],
   );
 
-  const openEdit = useCallback((event: CalendarEvent) => {
+  const openCreate = useCallback(
+    (info: CellInfo) => openBlank(info.start, info.end ?? info.start.add(1, 'hour'), info.allDay ?? false),
+    [openBlank],
+  );
+
+  const openEditSchedule = useCallback((ev: ScheduleEvent) => {
     setWarnings([]);
-    const raw = (event.data as { raw?: ScheduleEvent } | undefined)?.raw;
-    setDraft({
-      id: String(event.id),
-      title: event.title,
-      allDay: event.allDay ?? false,
-      start: event.start.format(LOCAL_FMT),
-      end: event.end.format(LOCAL_FMT),
-      location: event.location ?? '',
-      description: event.description ?? '',
-      color: raw?.color ?? 'blue',
-      calendarId: raw?.calendarId ?? '',
-    });
+    setDraft(draftFromSchedule(ev));
   }, []);
+
+  const openEdit = useCallback(
+    (event: CalendarEvent) => {
+      const raw = (event.data as { raw?: ScheduleEvent } | undefined)?.raw;
+      if (raw) {
+        openEditSchedule(raw);
+        return;
+      }
+      // 兜底：组件内部的模板事件没有挂原始数据，只能用它给的那几个字段
+      setWarnings([]);
+      setDraft({
+        id: String(event.id),
+        title: event.title,
+        allDay: event.allDay ?? false,
+        start: event.start.format(LOCAL_FMT),
+        end: event.end.format(LOCAL_FMT),
+        location: event.location ?? '',
+        description: event.description ?? '',
+        color: 'blue',
+        calendarId: '',
+      });
+    },
+    [openEditSchedule],
+  );
 
   /** 工具栏「新建」没有格点信息，默认落在下一个整点、时长 1 小时 */
   const openCreateDefault = useCallback(() => {
     const start = dayjs().startOf('hour').add(1, 'hour');
-    setWarnings([]);
-    setDraft({
-      title: '',
-      allDay: false,
-      start: start.format(LOCAL_FMT),
-      end: start.add(1, 'hour').format(LOCAL_FMT),
-      location: '',
-      description: '',
-      color: 'blue',
-      calendarId: defaultCalendarId,
-    });
-  }, [defaultCalendarId]);
+    openBlank(start, start.add(1, 'hour'));
+  }, [openBlank]);
 
   /* ---------------------------------------------------------- 快捷键 */
 
@@ -628,9 +673,138 @@ export default function App() {
   }, [openCreateDefault, undoLastDelete]);
 
   // 弹窗打开时整体让位：Esc、字母键都该归弹窗，不该被全局绑定抢走
-  const shortcutsActive = authState === 'authed' && !draft && !showSettings && !showTrash;
+  const shortcutsActive = authState === 'authed' && !draft && !showSettings && !showTrash && !menu;
   // 速查表开着时只留「再按一次 ? 收起」，否则在帮助页上乱按会悄悄改掉后面的视图
   useHotkeys(showShortcuts ? hotkeys.filter((h) => h.combo === '?') : hotkeys, shortcutsActive);
+
+  /* ---------------------------------------------------------- 右键菜单 */
+
+  /** 只导这一条。服务端的导出接口本来就支持按 id 挑，不必绕道前端拼文件。 */
+  const exportEvent = useCallback(
+    async (ev: ScheduleEvent) => {
+      try {
+        const { blob, filename } = await downloadIcs({ ids: [ev.id] });
+        saveBlob(blob, filename);
+        notify('ok', '已导出这一条');
+      } catch (e) {
+        if (e instanceof ApiError && e.isAuthError) {
+          handleAuthExpired();
+          return;
+        }
+        notify('err', e instanceof ApiError ? e.message : '导出失败');
+      }
+    },
+    [notify, handleAuthExpired],
+  );
+
+  const moveToCalendar = useCallback(
+    async (ev: ScheduleEvent, calendarId: string) => {
+      const name = calendars.find((c) => c.id === calendarId)?.name ?? '分组';
+      try {
+        await api.update(ev.id, { calendarId });
+        reload();
+        notify('ok', `已移到「${name}」`);
+      } catch (e) {
+        notify('err', e instanceof ApiError ? e.message : '移动失败');
+      }
+    },
+    [calendars, reload, notify],
+  );
+
+  /**
+   * 日程列表视图的兜底反查：那一列里每行只留了标题，没有 id。
+   * 同一天里标题唯一才认，两条同名就当作没点中 —— 猜错了比不响应更糟。
+   */
+  const findAgendaEvent = useCallback(
+    (date: string, title: string) => {
+      const day = dayjs(date);
+      const hits = events.filter((ev) => {
+        if (ev.title.trim() !== title) return false;
+        if (!ev.allDay) return dayjs(ev.start).isSame(day, 'day');
+        // 全天日程的 end 是开区间，减一天才是最后一天
+        return !dayjs(ev.start).isAfter(day, 'day') && !dayjs(ev.end).subtract(1, 'day').isBefore(day, 'day');
+      });
+      return hits.length === 1 ? hits[0] : null;
+    },
+    [events],
+  );
+
+  const eventMenu = useCallback(
+    (ev: ScheduleEvent): MenuBody => ({
+      heading: ev.title,
+      note: eventTimeNote(ev),
+      items: [
+        { label: '编辑', icon: 'edit', onSelect: () => openEditSchedule(ev) },
+        // 只有一个分组时「移到分组」是空菜单，不如不出现
+        ...(calendars.length > 1
+          ? [
+              {
+                label: '移到分组',
+                icon: 'calendar',
+                submenu: calendars.map((c) => ({
+                  label: c.name,
+                  hint: c.id === ev.calendarId ? '当前' : undefined,
+                  disabled: c.id === ev.calendarId,
+                  onSelect: () => void moveToCalendar(ev, c.id),
+                })),
+              },
+            ]
+          : []),
+        { label: '导出这一条', icon: 'download', hint: '.ics', onSelect: () => void exportEvent(ev) },
+        { label: '删除', icon: 'trash', danger: true, onSelect: () => void handleDelete(ev.id) },
+      ],
+    }),
+    [calendars, moveToCalendar, exportEvent, openEditSchedule, handleDelete],
+  );
+
+  const handleContextMenu = useCallback(
+    (e: ReactMouseEvent) => {
+      const target = readContextTarget(e.target);
+      if (!target) return;
+
+      let body: MenuBody | null = null;
+      if (target.kind === 'event') {
+        const ev = events.find((item) => item.id === target.eventId);
+        if (ev) body = eventMenu(ev);
+      } else if (target.kind === 'agendaEvent') {
+        const ev = findAgendaEvent(target.date, target.title);
+        if (ev) body = eventMenu(ev);
+      } else if (target.kind === 'slot') {
+        const start = dayjs(target.start);
+        body = {
+          heading: start.format('M月D日 HH:mm'),
+          note: '空白时段',
+          items: [
+            {
+              label: '在这里新建日程',
+              icon: 'plus',
+              onSelect: () => openBlank(start, start.add(1, 'hour')),
+            },
+          ],
+        };
+      } else {
+        const day = dayjs(target.date);
+        body = {
+          heading: day.format('M月D日 ddd'),
+          note: '整天',
+          items: [
+            {
+              label: '在当天新建全天日程',
+              icon: 'plus',
+              // 全天日程的 end 是开区间：次日零点
+              onSelect: () => openBlank(day.startOf('day'), day.add(1, 'day').startOf('day'), true),
+            },
+          ],
+        };
+      }
+
+      // 没认出目标就交给浏览器：在表头或时间轴上右键，弹原生菜单才是对的
+      if (!body) return;
+      e.preventDefault();
+      setMenu({ x: e.clientX, y: e.clientY, ...body });
+    },
+    [events, eventMenu, findAgendaEvent, openBlank],
+  );
 
   /** 由 IlEventFormBridge 交回来的关闭函数，用来同步关掉组件内部那张表单 */
   const ilFormCloseRef = useRef<() => void>(() => ({}));
@@ -931,7 +1105,7 @@ export default function App() {
           </>
         )}
 
-        <main className="min-h-0 flex-1 overflow-hidden p-2 sm:p-4">
+        <main className="min-h-0 flex-1 overflow-hidden p-2 sm:p-4" onContextMenu={handleContextMenu}>
           <IlamyCalendar
             key={`${settings.firstDayOfWeek}-${settings.timeFormat}-${isMobile ? 'm' : 'd'}`}
             events={calendarEvents}
@@ -992,6 +1166,17 @@ export default function App() {
       />
 
       <ShortcutSheet open={showShortcuts} onClose={() => setShowShortcuts(false)} specs={hotkeys} />
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          heading={menu.heading}
+          note={menu.note}
+          items={menu.items}
+          onClose={() => setMenu(null)}
+        />
+      )}
 
       {toast && (
         <div

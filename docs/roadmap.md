@@ -17,6 +17,7 @@
 | — | iCalendar 导出 | `GET /api/export/events.ics`：按区间 / 分组 / 指定 id 导出，行按 75 个八位组折行、CRLF、UTF-8；定时写 UTC、全天写 `VALUE=DATE` 且 `DTEND` 推到次日。界面头部有「导出」入口，`@ilamy/calendar` 自带的那个按钮已用 `hideExportButton` 关掉（它只导已加载的那一段，且全天日程的 `DTEND` 没按开区间处理，会少一天） |
 | — | 搜索修复 | `GET /api/events?q=` 的 SQL 里 `IFNULL(x, "")` 双引号被 SQLite 当成列名，导致检索一律 500；改为单引号 |
 | 14 | 键盘快捷键 | `src/lib/hotkeys.ts` 声明键位、说明与分组，`ShortcutSheet` 直接从这份声明渲染速查表（`?` 或头部图标调出），不会再出现「文档有、实际没有」。已接：`n` 新建、`t` 回今天、`d/w/m/a` 切视图、`Ctrl/⌘+Enter` / `Ctrl/⌘+S` 保存、`Ctrl/⌘+Z` 撤销上一次删除、`Esc` 收侧栏。切换视图靠 `CalendarApiBridge` 借 `renderEventForm` 槽拿到 `useIlamyCalendarContext()` —— 组件没有受控的 `view` 属性，只有 `initialView`。删除的提示条多了一个「撤销」，比只显示「删除成功」有用 |
+| — | 右键菜单 | 事件上右键：编辑 / 移到分组（子菜单，只有一个分组时不显示）/ 导出这一条（带 `ids` 走服务端）/ 删除（进回收站，可撤销）。空白时间格右键按该时段新建，月视图日期格与全天行按整天新建。组件的回调只有左键那两条，目标靠 `data-testid` 沿祖先链反查（`vertical-event-<id>`、`horizontal-event-<id>`、`vertical-cell-<date>-<HH>-<mm>`、`day-cell-<date>`），见 `src/lib/calendar-target.ts`。日程列表视图是唯一例外：插件自绘事件行、既不用 `renderEvent` 也没留 id，只能按「同一日期内标题唯一」反查，认不准就不弹菜单 |
 
 ## P0 · 建议下一轮做
 

@@ -149,7 +149,7 @@ sudo morrow-update v0.3.0          # 指定 tag / 分支 / commit
 几点实现上的取舍：
 
 - **不走 `git pull`**：用 `api.github.com` 解析版本、`codeload.github.com` 下载源码包，服务器不需要放密钥、也不需要 git 工作副本——`github.com` 的 HTTPS 在很多网络里不通，那两个域名通常通。服务器上只有 git 工作副本时用 `deploy/update.sh`。
-- **依赖没变就不重装**：`package-lock.json` 与 Node 版本都没变时，复用 `/var/cache/morrow-calendar/build` 里的完整依赖，跳过 `npm ci`——这一步通常是整条升级里最慢、也最容易因网络失败的。
+- **依赖没变就不重装**：构建固定跑在 `/var/cache/morrow-calendar/work` 里，`package-lock.json` 与 Node 版本都没变时直接沿用那里的 `node_modules`，跳过 `npm ci`，也不再把 280MB 的依赖来回拷——这两步原本比构建本身还慢。
 - **短命令自己维护**：`update-from-github.sh` 每次成功运行都会把 `/usr/local/bin/morrow-update` 重写成指向注册目录里那份脚本，不需要另外安装，也不会指向旧路径。
 - **并发保护**：升级过程持有 `/var/lock/morrow-update.lock`，第二个 `morrow-update` 会被直接拒绝，不会两个进程一起写代码目录。
 

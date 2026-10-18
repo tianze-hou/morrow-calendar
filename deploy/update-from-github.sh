@@ -36,7 +36,7 @@ PREV_DIR="${PREV_DIR:-/opt/morrow-calendar.prev}"
 ENV_FILE="${ENV_FILE:-/etc/morrow-calendar.env}"
 SERVICE_NAME="${SERVICE_NAME:-morrow-calendar}"
 BIN_PATH="${BIN_PATH:-/usr/local/bin/morrow-update}"
-BUILD_CACHE="${BUILD_CACHE:-/var/cache/morrow-calendar/build}"
+WORK_DIR="${WORK_DIR:-/var/cache/morrow-calendar/work}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/morrow-calendar}"
 LOCK_FILE="${LOCK_FILE:-/var/lock/morrow-update.lock}"
 VERSION_FILE="$APP_DIR/.deploy-version"
@@ -136,7 +136,7 @@ if [ "$DO_STATUS" -eq 1 ]; then
   [ -f "$DB_PATH" ] && echo "  库文件大小 $(du -h "$DB_PATH" | cut -f1)"
   echo "  回滚点     $([ -f "$PREV_DIR/deploy/deploy.sh" ] && echo "$PREV_DIR" || echo 无)"
   echo "  最近备份   $(ls -t "$BACKUP_DIR" 2>/dev/null | head -1 || true)"
-  echo "  构建缓存   $([ -d "$BUILD_CACHE/node_modules" ] && echo "$BUILD_CACHE" || echo 无)"
+  echo "  构建目录   $([ -d "$WORK_DIR/node_modules" ] && echo "$WORK_DIR（依赖已就位）" || echo "$WORK_DIR（待首次安装）")"
   echo
   exit 0
 fi
@@ -240,20 +240,27 @@ mkdir -p "$TMP/src"
 tar xzf "$TMP/src.tgz" -C "$TMP/src" --strip-components=1
 [ -f "$TMP/src/deploy/deploy.sh" ] || die "源码包结构不对：缺少 deploy/deploy.sh"
 
-# ── 10. 构建缓存 ───────────────────────────────────────────────
-# npm ci 要从外网装 600+ 个包，是整条升级里最慢、也最容易因网络失败的一步。
-# package-lock 与 Node 版本都没变时，直接复用上次装好的 node_modules。
+# ── 10. 持久构建目录与依赖复用 ─────────────────────────────────
+# 在哪儿构建？放在固定的工作目录里，而不是每次新建的临时目录。
+# 原因是 node_modules 有 280MB：每版都重新 npm ci，再把它拷来拷去，这部分
+# 开销比构建本身还大。固定目录下依赖就一直在原地，只有源码需要同步。
+mkdir -p "$WORK_DIR"
+rsync -a --delete --exclude 'node_modules' --exclude 'dist' --exclude 'dist-server' \
+  "$TMP/src/" "$WORK_DIR/"
+
 LOCK_SHA="$(sha256sum "$TMP/src/package-lock.json" | cut -d' ' -f1)"
 NODE_V="$(node -v)"
-if [ "$DO_CACHE" -eq 1 ] \
-   && [ -f "$BUILD_CACHE/lock.sha" ] && [ -d "$BUILD_CACHE/node_modules" ] \
-   && [ "$(cat "$BUILD_CACHE/lock.sha")" = "$LOCK_SHA" ] \
-   && [ "$(cat "$BUILD_CACHE/node.version" 2>/dev/null || true)" = "$NODE_V" ]; then
-  log "依赖未变（package-lock 与 Node 版本一致），复用构建缓存，跳过 npm ci"
-  rsync -a "$BUILD_CACHE/node_modules/" "$TMP/src/node_modules/"
+DEPS_REUSED=0
+if [ "$DO_CACHE" -eq 1 ] && [ -d "$WORK_DIR/node_modules" ] \
+   && [ "$(cat "$WORK_DIR/node_modules.lock" 2>/dev/null || true)" = "$LOCK_SHA" ] \
+   && [ "$(cat "$WORK_DIR/node_modules.node" 2>/dev/null || true)" = "$NODE_V" ]; then
+  log "依赖未变（package-lock 与 Node 版本一致），跳过 npm ci 与依赖同步"
   export SKIP_INSTALL=1
+  export SYNC_DEPS=0
+  DEPS_REUSED=1
+else
+  export SYNC_DEPS=1
 fi
-export BUILD_CACHE_DIR="$BUILD_CACHE"
 
 # ── 11. 保存回滚点 ─────────────────────────────────────────────
 # 只存源码，不存 node_modules（上百 MB，且可由 package-lock 重建）
@@ -286,7 +293,9 @@ rollback() {
   if [ ! -f "$PREV_DIR/deploy/deploy.sh" ]; then
     die "回滚点不完整（$PREV_DIR/deploy/deploy.sh 缺失）。服务可能处于停止状态，请立即检查：journalctl -u $SERVICE_NAME -n 50"
   fi
-  if bash "$PREV_DIR/deploy/deploy.sh"; then
+  # 回滚点里没有 node_modules，必须让 deploy.sh 老老实实装一遍并把依赖同步过去，
+  # 不能继承上面为「复用依赖」设的环境变量。
+  if ( export SKIP_INSTALL=0 SYNC_DEPS=1; bash "$PREV_DIR/deploy/deploy.sh" ); then
     sync_source "$PREV_DIR" || true
     [ -n "$CURRENT_SHA" ] && write_version "$CURRENT_SHA" "rollback"
     log "已回滚到 ${CURRENT_SHA:0:7}"
@@ -295,8 +304,8 @@ rollback() {
   fi
 }
 
-log "构建并安装（npm ci + build，需要几分钟）"
-if bash "$TMP/src/deploy/deploy.sh"; then
+log "构建并安装（依赖已就位则跳过 npm ci）"
+if bash "$WORK_DIR/deploy/deploy.sh"; then
   log "新版本部署完成"
 else
   warn "部署失败"
@@ -304,9 +313,15 @@ else
   die "已回滚到上一版本，服务应已恢复。失败原因请看上面的输出"
 fi
 
+# 这一轮真的装过依赖，才把「可现在复用」的标记写进工作目录
+if [ "$DEPS_REUSED" -eq 0 ]; then
+  printf '%s\n' "$LOCK_SHA" > "$WORK_DIR/node_modules.lock"
+  printf '%s\n' "$NODE_V" > "$WORK_DIR/node_modules.node"
+fi
+
 # ── 13. 收尾：源码同步到安装目录、写版本、修属主 ───────────────
 log "同步源码并记录版本"
-sync_source "$TMP/src"
+sync_source "$WORK_DIR"
 write_version "$TARGET_SHA" "$TARGET_REF"
 
 # 代码目录归运行用户，避免下次以 root 部署后服务读不到

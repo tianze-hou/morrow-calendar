@@ -300,14 +300,14 @@ sudo morrow-update --no-cache       # 不复用构建缓存，强制重新装依
 3. 解析远端版本，与 `$APP_DIR/.deploy-version` 里记录的本机版本比对，相同就直接退出
 4. 备份数据库（`deploy/backup.sh`，服务运行中也能安全备份）
 5. 下载源码包并校验（空包或 tar 解不开会中止）
-6. `package-lock.json` 与 Node 版本都没变时，从 `/var/cache/morrow-calendar/build` 复用依赖，跳过 `npm ci`
+6. 源码同步到固定构建目录 `/var/cache/morrow-calendar/work`；`package-lock.json` 与 Node 版本都没变时，复用那里的 `node_modules`，跳过 `npm ci` 与依赖拷贝
 7. 把当前代码存为回滚点 `$PREV_DIR`（默认 `/opt/morrow-calendar.prev`，只存源码，不含 `node_modules`）
 8. 构建 → 安装 → 重启 → 健康检查
 9. 记录新版本到 `.deploy-version`，并刷新 `/usr/local/bin/morrow-update`
 
 第 5 步之后任一步失败，会自动用回滚点重新部署一次；回滚也失败时会明确告诉你服务可能处于停止状态、该查什么日志。数据目录全程不碰。
 
-构建缓存省掉的是 `npm ci` —— 它要从外网装 600+ 个包，既是整条升级里最耗时的步骤，也是最容易因网络抖动失败的一步。依赖真有变化（`package-lock.json` 变了）或 Node 大版本变了，缓存自动失效，回到完整安装。
+构建目录为什么是固定的：`node_modules` 有 280MB，`npm ci` 装一遍约 13 秒，来回拷两次反而更慢。所以构建不再在临时目录里做，而是固定在一个工作目录里——源码每次整体覆盖，依赖留在原地。依赖真有变化（`package-lock.json` 变了）或 Node 大版本变了，标记失效，自动回到完整安装并把新依赖同步到安装目录。
 
 想固定线上版本就在本地打 tag（`git tag v0.3.0 && git push --tags`），服务器上 `sudo morrow-update v0.3.0`；回退就再执行一次旧 tag。
 

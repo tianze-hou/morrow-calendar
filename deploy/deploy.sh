@@ -35,10 +35,10 @@ cd "$SRC_DIR"
 # 只把运行时依赖带到安装目录。显式写 --include=dev，避免部署 shell 里带着
 # NODE_ENV=production 时 npm 自动省略 dev 依赖。
 #
-# SKIP_INSTALL=1 由 update-from-github.sh 在「package-lock 没变」时传入：
-# 那种情况下 node_modules 是上一版构建留下的完整拷贝，重装纯属浪费时间。
+# SKIP_INSTALL=1 由 update-from-github.sh 在「package-lock 与 Node 版本都没变」时传入：
+# 那种情况下 SRC_DIR 里的 node_modules 就是上次构建留下的完整一份，重装纯属浪费。
 if [ "${SKIP_INSTALL:-0}" = "1" ] && [ -d node_modules ]; then
-  log "跳过依赖安装（SKIP_INSTALL=1，复用上一版依赖）"
+  log "跳过依赖安装（SKIP_INSTALL=1，复用上次装好的依赖）"
 else
   npm ci --include=dev --no-audit --no-fund --prefer-offline
 fi
@@ -54,17 +54,10 @@ fi
 
 npm run build
 
-# 构建成功后把「完整依赖」存进缓存目录，下次 package-lock 没变就能直接复用。
-# 必须在 prune 之前做：prune 会把 devDependencies 删掉，而下次构建还要用。
-if [ -n "${BUILD_CACHE_DIR:-}" ]; then
-  log "更新构建缓存：$BUILD_CACHE_DIR"
-  mkdir -p "$BUILD_CACHE_DIR"
-  rsync -a --delete "$SRC_DIR/node_modules/" "$BUILD_CACHE_DIR/node_modules/"
-  sha256sum "$SRC_DIR/package-lock.json" | cut -d' ' -f1 > "$BUILD_CACHE_DIR/lock.sha"
-  node -v > "$BUILD_CACHE_DIR/node.version"
-fi
-
-npm prune --omit=dev
+# 注意：这里**不**在 SRC_DIR 里 prune。
+# SRC_DIR 若是持久工作目录（update-from-github.sh 用的就是这种）， prune 会把
+# devDependencies 删掉，下次「复用依赖、跳过 npm ci」就再也构建不起来了。
+# 修剪只对安装目录做，见下一节。
 [ -f dist-server/index.mjs ] || die "后端构建产物缺失"
 [ -f dist/index.html ] || die "前端构建产物缺失"
 
@@ -74,7 +67,16 @@ mkdir -p "$APP_DIR" "$DATA_DIR"
 rsync -a --delete --exclude 'data' --exclude 'node_modules' "$SRC_DIR/dist" "$APP_DIR/"
 rsync -a --delete "$SRC_DIR/dist-server" "$APP_DIR/"
 install -m 0644 "$SRC_DIR/package.json" "$APP_DIR/package.json"
-rsync -a --delete "$SRC_DIR/node_modules" "$APP_DIR/node_modules"
+
+# 依赖没变时跳过这一步：node_modules 有 280MB，来回拷一次比装一遍还慢，
+# 而安装目录里那份本来就是同一个 package-lock 的产物，没必要动。
+if [ "${SYNC_DEPS:-1}" = "1" ]; then
+  log "同步运行时依赖（装到 $APP_DIR 后剪掉 devDependencies）"
+  rsync -a --delete "$SRC_DIR/node_modules/" "$APP_DIR/node_modules/"
+  ( cd "$APP_DIR" && npm prune --omit=dev --no-audit --no-fund )
+else
+  log "依赖未变（SYNC_DEPS=0），保留 $APP_DIR/node_modules 不动"
+fi
 
 # ── 4. 运行用户 ────────────────────────────────────────────────
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then

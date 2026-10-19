@@ -25,6 +25,12 @@
  * 强调色是陶土橘（#ad5c30），和图标同源。这一档是算着定的：
  * 更浅的 #b4653a 配白字只有 4.13:1，按钮上的字会发虚；#ad5c30 到 4.61:1，
  * 刚好过 AA，又不至于暗到发黑。
+ *
+ * 另外单开一支「此刻」线色（--now-line，朱红 #c0392b）。它不能借用主色：
+ * 主色同时是「今天」整列的底色，也是陶土橘日程块的颜色，线跟它们同色就等于
+ * 没有高亮。这支红刻意比红档日程块（#a94a3c）更亮、更沉得住色（两者色差
+ * ΔE≈19，一条 2px 的线放进去一眼能认出来），又不回到 --destructive 那种
+ * 「报错提示」的红——它沿用的是纸上的朱笔，不是警告。
  */
 :root,
 [data-theme='day'] {
@@ -36,6 +42,8 @@
   --popover-foreground: #2b2420;
   --primary: #ad5c30;
   --primary-foreground: #fff9f1;
+  /* 「此刻」指示线专用：见文件头说明，不参与按钮/高亮等其他用途 */
+  --now-line: #c0392b;
   --secondary: #ece2d2;
   --secondary-foreground: #2b2420;
   --muted: #f1e8da;
@@ -78,6 +86,9 @@
   --popover-foreground: #e6ddcf;
   --primary: #d09258;
   --primary-foreground: #1a1512;
+  /* 同一支朱红在暗底上要提亮：白天的 #c0392b 压在 #1a1614 上会闷成一团暗红，
+     提亮到 #e8705a 才和红档日程块拉开（ΔE≈20），对底色仍有 5.9:1。 */
+  --now-line: #e8705a;
   --secondary: #2b2521;
   --secondary-foreground: #e6ddcf;
   --muted: #251f1c;
@@ -121,6 +132,7 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-now-line: var(--now-line);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);

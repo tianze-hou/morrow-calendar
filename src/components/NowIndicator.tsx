@@ -66,8 +66,10 @@ function useNowTick(intervalMs = TICK_MS): number {
 
 /**
  * 与组件库默认线条相同的类名与结构 —— 只换「谁来驱动位置」，不改视觉。
- * 颜色走 --primary：原先是写死的 bg-red-500，在暖色界面里像一条报错提示；
- * 换成主色后，「此刻」和「今天」的高亮同源，日夜两套主题都对得上。
+ *
+ * 颜色走 --now-line，不用 --primary：主色同时是「今天」整列的底色和陶土橘日程块
+ * 的颜色，线跟它们同色就等于没高亮。--now-line 是一支专属的朱红（白日 #c0392b /
+ * 夜里 #e8705a），与红档日程块、与主色都拉开了色差，见 index.css 文件头。
  * 定位属性（top / left）由调用方通过 style 传入。
  */
 function Line({
@@ -87,8 +89,8 @@ function Line({
         data-testid="current-time-indicator"
         style={style}
       >
-        <div className="size-2 shrink-0 rounded-full bg-primary" data-testid="current-time-dot" />
-        <div className="w-0.5 flex-1 bg-primary" />
+        <div className="size-2 shrink-0 rounded-full bg-now-line" data-testid="current-time-dot" />
+        <div className="w-0.5 flex-1 bg-now-line" />
       </div>
     );
   }
@@ -99,8 +101,8 @@ function Line({
       data-testid="current-time-indicator"
       style={style}
     >
-      <div className="size-2 shrink-0 rounded-full bg-primary" data-testid="current-time-dot" />
-      <div className="h-0.5 flex-1 bg-primary" />
+      <div className="size-2 shrink-0 rounded-full bg-now-line" data-testid="current-time-dot" />
+      <div className="h-0.5 flex-1 bg-now-line" />
     </div>
   );
 }

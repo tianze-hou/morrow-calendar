@@ -217,6 +217,67 @@ h4 {
   background: color-mix(in srgb, var(--primary) 26%, transparent);
 }
 
+/*
+ * ── 「此刻」指示线 ──────────────────────────────────────
+ *
+ * 光换颜色还不够醒目：一根 2px 的线夹在一堆相同明度的日程块里，看两秒就习惯了。
+ * 也不能靠把颜色再加浓——再深就落进红档日程块（#a94a3c）的明度区间，等于又撞回去。
+ * 所以醒目度靠三件视觉手法叠出来，颜色只占一档：
+ *
+ * 1. 线加粗到 3px。
+ * 2. 「纸色描边」：用 --card 打一圈 1px 外描边。线压在色块上时两侧各留一道底色，
+ *    像拿刀在纸上划开一道缝，块子再多也切得断。这是让它不糊的关键一层。
+ * 3. 「同色柔光」：8px 的模糊投影，alpha 不到一半。线因此看着是「亮着」，
+ *    而不是涂上去的——但又不至于糊成霓虹。
+ *
+ * 起点那颗点再带一圈极慢的光晕（2.8s 一轮，扩散到两倍就消失）。静态高亮看久了
+ * 会失效，一点点呼吸能一直提醒「这是现在」；幅度压得很小，不跟正文抢注意力。
+ * 系统开了「减弱动态效果」时整段动画关掉，只留静态光。
+ */
+.now-line-bar {
+  background-color: var(--now-line);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--card) 92%, transparent),
+    0 0 8px color-mix(in srgb, var(--now-line) 45%, transparent);
+}
+
+.now-line-dot {
+  position: relative;
+  background-color: var(--now-line);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--now-line) 14%, transparent),
+    0 0 10px color-mix(in srgb, var(--now-line) 55%, transparent);
+}
+
+.now-line-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  background-color: color-mix(in srgb, var(--now-line) 30%, transparent);
+  animation: now-line-breathe 2.8s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes now-line-breathe {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.5;
+  }
+  70%,
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .now-line-dot::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 /* 细滚动条，避免在日历里出现粗重的系统滚动条 */
 ::-webkit-scrollbar {
   width: 9px;

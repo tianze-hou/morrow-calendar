@@ -65,11 +65,15 @@ function useNowTick(intervalMs = TICK_MS): number {
 }
 
 /**
- * 与组件库默认线条相同的类名与结构 —— 只换「谁来驱动位置」，不改视觉。
+ * 与组件库默认线条相同的类名与结构 —— 只换「谁来驱动位置」。
  *
  * 颜色走 --now-line，不用 --primary：主色同时是「今天」整列的底色和陶土橘日程块
  * 的颜色，线跟它们同色就等于没高亮。--now-line 是一支专属的朱红（白日 #c0392b /
- * 夜里 #e8705a），与红档日程块、与主色都拉开了色差，见 index.css 文件头。
+ * 夜里 #e8705a），与红档日程块、与主色都拉开了色差，见 index.css。
+ *
+ * 线条本身加粗到 3px，并叠了「纸色描边 + 同色柔光」两层（.now-line-bar）；
+ * 起点那颗点带一圈极慢的呼吸光晕（.now-line-dot），一眼能看出是「此刻」而不是
+ * 一根装饰线。视觉全在 CSS 里，这里只管结构与定位。
  * 定位属性（top / left）由调用方通过 style 传入。
  */
 function Line({
@@ -89,8 +93,8 @@ function Line({
         data-testid="current-time-indicator"
         style={style}
       >
-        <div className="size-2 shrink-0 rounded-full bg-now-line" data-testid="current-time-dot" />
-        <div className="w-0.5 flex-1 bg-now-line" />
+        <div className="now-line-dot size-2.5 shrink-0 rounded-full" data-testid="current-time-dot" />
+        <div className="now-line-bar w-[3px] flex-1" />
       </div>
     );
   }
@@ -101,8 +105,8 @@ function Line({
       data-testid="current-time-indicator"
       style={style}
     >
-      <div className="size-2 shrink-0 rounded-full bg-now-line" data-testid="current-time-dot" />
-      <div className="h-0.5 flex-1 bg-now-line" />
+      <div className="now-line-dot size-2.5 shrink-0 rounded-full" data-testid="current-time-dot" />
+      <div className="now-line-bar h-[3px] flex-1" />
     </div>
   );
 }
